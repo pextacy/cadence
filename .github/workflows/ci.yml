@@ -1,0 +1,105 @@
+name: CI
+
+# Runs on every pull request (and pushes to main as a safety net). Two parallel
+# jobs: the TypeScript monorepo (npm workspaces) and the Rust/Odra contracts.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # TypeScript workspaces: install once at the root, then typecheck, test, build
+  # across mandate/agent/scripts/dashboard via the root --workspaces scripts.
+  # ---------------------------------------------------------------------------
+  node:
+    name: TypeScript (typecheck + test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+
+      - name: Test (all workspaces)
+        run: npm test
+
+      - name: Build (all workspaces)
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Rust / Odra contracts. Toolchain is pinned by contracts/rust-toolchain
+  # (nightly-2026-01-01). binaryen (wasm-opt) + wabt (wasm-strip) are required by
+  # build-wasm.sh to lower the artifacts to Casper-accepted MVP wasm.
+  # ---------------------------------------------------------------------------
+  contracts:
+    name: Contracts (clippy + test + wasm)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read pinned toolchain
+        id: toolchain
+        run: echo "channel=$(tr -d '[:space:]' < rust-toolchain)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain (pinned)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: cargo-${{ runner.os }}-${{ steps.toolchain.outputs.channel }}-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ steps.toolchain.outputs.channel }}-
+
+      - name: Install binaryen + wabt (wasm-opt / wasm-strip)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binaryen wabt
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: Build deployable WASM (build-wasm.sh)
+        run: bash build-wasm.sh
+
+      - name: Upload contract WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contracts-wasm
+          path: contracts/**/wasm/*.wasm
+          if-no-files-found: error

@@ -2,4 +2,6 @@
 #![cfg_attr(not(test), no_main)]
 extern crate alloc;
 
+pub mod errors;
+pub mod preimage;
 pub mod token;

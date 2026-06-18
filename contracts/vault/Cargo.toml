@@ -5,6 +5,8 @@ edition.workspace = true
 
 [dependencies]
 odra = { workspace = true }
+cadence-common = { path = "../common" }
+cadence_access_control = { path = "../access-control", default-features = false }
 
 [dev-dependencies]
 odra-test = { workspace = true }

@@ -22,6 +22,16 @@ CONTRACTS=(
   "vault:cadence_vault_build_contract:ExecutionVault"
   "cep18:cadence_cep18_build_contract:Cep18"
   "x402-token:cadence_x402_token_build_contract:X402Token"
+  "access-control:cadence_access_control_build_contract:AccessControlContract"
+  "dex-adapter:cadence_dex_adapter_build_contract:SettlementAdapter"
+  "dex-adapter:cadence_dex_adapter_build_contract:Cep18SwapAdapter"
+  "price-oracle:cadence_price_oracle_build_contract:SignedPriceOracle"
+  "price-oracle:cadence_price_oracle_build_contract:OracleAggregator"
+  "vault-factory:cadence_vault_factory_build_contract:VaultFactory"
+  "vault-registry:cadence_vault_registry_build_contract:VaultRegistry"
+  "fee-module:cadence_fee_module_build_contract:FeeModule"
+  "treasury-multisig:cadence_treasury_multisig_build_contract:TreasuryMultisig"
+  "guardian:cadence_guardian_build_contract:Guardian"
 )
 
 for entry in "${CONTRACTS[@]}"; do

@@ -17,7 +17,9 @@
 //! the signature and checks the key hashes to `from`. Same x402 semantics
 //! (gasless, replay-protected, time-bounded), Casper-native crypto.
 
-use odra::casper_types::bytesrepr::{Bytes, ToBytes};
+use crate::errors::Error;
+use crate::preimage::authorization_message;
+use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::{PublicKey, U256};
 use odra::prelude::*;
 
@@ -48,32 +50,6 @@ pub struct AuthorizationUsed {
     pub to: Address,
     pub amount: U256,
     pub nonce: Bytes,
-}
-
-#[odra::odra_error]
-pub enum Error {
-    /// Transfer amount exceeds the holder's balance.
-    InsufficientBalance = 1,
-    /// `transfer_from` amount exceeds the caller's allowance.
-    InsufficientAllowance = 2,
-    /// Caller is not the token owner (the mint authority).
-    NotOwner = 3,
-    /// A zero amount was supplied where a positive value is required.
-    ZeroAmount = 4,
-    /// Arithmetic overflow in supply or balance.
-    Overflow = 5,
-    /// The supplied public key does not hash to the `from` account.
-    NotAuthorizedSigner = 6,
-    /// `now < valid_after` — the authorization is not yet usable.
-    AuthorizationNotYetValid = 7,
-    /// `now > valid_before` — the authorization window has closed.
-    AuthorizationExpired = 8,
-    /// This `(from, nonce)` authorization has already been used.
-    AuthorizationAlreadyUsed = 9,
-    /// The signature does not verify against the authorization preimage.
-    BadSignature = 10,
-    /// Failed to serialize the authorization preimage.
-    SerializationError = 11,
 }
 
 /// A CEP-18 fungible token with an x402-style gasless authorized transfer.
@@ -202,7 +178,18 @@ impl X402Token {
             self.env().revert(Error::AuthorizationAlreadyUsed);
         }
         // 4. the signature must verify against the canonical preimage.
-        let message = self.authorization_message(from, to, value, valid_after_ms, valid_before_ms, &nonce);
+        let message = match authorization_message(
+            self.env().self_address(),
+            from,
+            to,
+            value,
+            valid_after_ms,
+            valid_before_ms,
+            &nonce,
+        ) {
+            Ok(message) => message,
+            Err(_) => self.env().revert(Error::SerializationError),
+        };
         if !self.env().verify_signature(&message, &signature, &public_key) {
             self.env().revert(Error::BadSignature);
         }
@@ -213,38 +200,6 @@ impl X402Token {
     }
 
     // ----- internal helpers (private — never exposed as entrypoints) -----
-
-    /// The canonical authorization preimage that the payer signs and the contract
-    /// verifies: the contract's own address (binds the authorization to *this*
-    /// token, preventing cross-contract replay) followed by every authorization
-    /// field, each in Casper `ToBytes` encoding.
-    fn authorization_message(
-        &self,
-        from: Address,
-        to: Address,
-        value: U256,
-        valid_after_ms: u64,
-        valid_before_ms: u64,
-        nonce: &Bytes,
-    ) -> Bytes {
-        let parts: [Result<Vec<u8>, _>; 7] = [
-            self.env().self_address().to_bytes(),
-            from.to_bytes(),
-            to.to_bytes(),
-            value.to_bytes(),
-            valid_after_ms.to_bytes(),
-            valid_before_ms.to_bytes(),
-            nonce.to_bytes(),
-        ];
-        let mut buf: Vec<u8> = Vec::new();
-        for part in parts {
-            match part {
-                Ok(bytes) => buf.extend_from_slice(&bytes),
-                Err(_) => self.env().revert(Error::SerializationError),
-            }
-        }
-        Bytes::from(buf)
-    }
 
     fn do_transfer(&mut self, from: Address, to: Address, amount: U256) {
         if amount.is_zero() {
@@ -287,6 +242,7 @@ impl X402Token {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use odra::casper_types::bytesrepr::ToBytes;
     use odra::host::{Deployer, HostEnv};
 
     const SUPPLY: u64 = 1_000_000;

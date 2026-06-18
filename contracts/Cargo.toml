@@ -1,15 +1,28 @@
 [workspace]
 resolver = "2"
-members = ["vault", "cep18", "x402-token"]
+members = [
+    "common",
+    "vault",
+    "cep18",
+    "x402-token",
+    "access-control",
+    "dex-adapter",
+    "price-oracle",
+    "vault-factory",
+    "vault-registry",
+    "fee-module",
+    "treasury-multisig",
+    "guardian",
+]
 
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
 
 [workspace.dependencies]
-odra = { version = "2.8.0", features = [], default-features = false }
-odra-test = { version = "2.8.0", features = [], default-features = false }
-odra-build = { version = "2.8.0", features = [], default-features = false }
+odra = { version = "2.8.1", features = [], default-features = false }
+odra-test = { version = "2.8.1", features = [], default-features = false }
+odra-build = { version = "2.8.1", features = [], default-features = false }
 
 # Profiles live at the workspace root; Cargo ignores profiles set in member crates.
 [profile.release]
