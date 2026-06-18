@@ -221,10 +221,11 @@ impl Guardian {
     }
 
     fn revoke_guardian(&mut self, who: Address) {
-        // grant_unchecked / a direct map clear is not exposed; route through the
-        // RBAC primitive's revoke, which the caller (a GUARDIAN that also holds
-        // ROOT_ADMIN via bootstrap, or whose role admin is ROOT_ADMIN) administers.
-        self.ac.revoke_role(roles::GUARDIAN, who);
+        // Authorization is enforced by the caller (assert_guardian) before a
+        // rotation hand-off, so use the unchecked primitive: a plain GUARDIAN
+        // need not also hold role_admin[GUARDIAN] (ROOT_ADMIN) to hand off.
+        let sender = self.env().caller();
+        self.ac.revoke_unchecked(roles::GUARDIAN, who, sender);
     }
 
     /// Revert [`Error::Unauthorized`] unless the caller holds [`roles::GUARDIAN`].

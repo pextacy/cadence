@@ -127,6 +127,16 @@ impl AccessControl {
         }
     }
 
+    /// Revoke `role` from `who` WITHOUT an admin check. The composing contract is
+    /// responsible for authorizing the caller (e.g. Guardian's `assert_guardian`
+    /// before a self-rotation hand-off). NOT exposed as an entrypoint.
+    pub fn revoke_unchecked(&mut self, role: Role, who: Address, sender: Address) {
+        if self.has_role(role, who) {
+            self.roles.set(&(role, who), false);
+            self.env().emit_event(RoleRevoked { role, account: who, sender });
+        }
+    }
+
     /// Set `role`'s admin WITHOUT a caller check. Used only during the composing
     /// contract's `init` to wire up the initial admin topology.
     pub fn set_role_admin_unchecked(&mut self, role: Role, admin: Role) {

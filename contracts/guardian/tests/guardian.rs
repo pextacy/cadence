@@ -241,6 +241,25 @@ fn rotate_guardian_moves_authority() {
 }
 
 #[test]
+fn plain_guardian_can_rotate_again() {
+    // Two consecutive hand-offs: deployer -> A, then A -> B where A holds only
+    // GUARDIAN (not ROOT_ADMIN). Proves rotation does not require role-admin.
+    let mut fx = setup(0);
+    let a = fx.outsider;
+    let b = fx.env.get_account(3);
+
+    fx.env.set_caller(fx.admin);
+    fx.guardian.rotate_guardian(a);
+    assert!(fx.guardian.is_guardian(a));
+
+    // A is a plain GUARDIAN with no ROOT_ADMIN, yet can hand off to B.
+    fx.env.set_caller(a);
+    fx.guardian.rotate_guardian(b);
+    assert!(fx.guardian.is_guardian(b));
+    assert!(!fx.guardian.is_guardian(a));
+}
+
+#[test]
 fn rotate_to_self_is_rejected() {
     let mut fx = setup(0);
     fx.env.set_caller(fx.admin);
