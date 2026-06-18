@@ -16,14 +16,37 @@ import {
   networkNodeRpc,
   requireEnv,
 } from "./lib/casper.js";
+import { confirmTransaction } from "./lib/confirm.js";
+import {
+  findRecord,
+  loadManifest,
+  saveManifest,
+  upsertRecord,
+  type DeploymentRecord,
+} from "./lib/manifest.js";
 
 const INSTALL_PAYMENT_MOTES = Number(process.env.DEPLOY_PAYMENT_MOTES ?? "300000000000");
+const MANIFEST_PATH = process.env.DEPLOYMENTS_MANIFEST_PATH ?? "./.deployments.json";
+const CONFIRM_TIMEOUT_MS = Number(process.env.CONFIRM_TIMEOUT_MS ?? "180000");
+const CONFIRM_POLL_INTERVAL_MS = Number(process.env.CONFIRM_POLL_INTERVAL_MS ?? "5000");
 
 export interface DeployResult {
   transactionHash: string;
+  contractHash?: string;
+  packageHash?: string;
+  /** True when an existing confirmed install was reused instead of re-submitted. */
+  skipped: boolean;
 }
 
-/** Deploy the Execution Vault WASM with the signed mandate's limits as init args. */
+/**
+ * Deploy the Execution Vault WASM with the signed mandate's limits as init
+ * args. Idempotent + finality-confirmed:
+ *
+ * 1. If a `confirmed` install for this `(chain, mandateDigest)` already exists
+ *    in the manifest, log a skip and return its recorded hashes.
+ * 2. Otherwise submit, record `submitted`, poll the tx to finality, then record
+ *    `confirmed` / `failed`. Throws on on-chain revert or timeout.
+ */
 export async function deployVault(): Promise<DeployResult> {
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
@@ -32,9 +55,29 @@ export async function deployVault(): Promise<DeployResult> {
   const agentAccountHash = requireEnv("AGENT_ACCOUNT_HASH"); // "account-hash-…"
   const treasuryKey = loadSecp256k1(requireEnv("TREASURY_PRIVATE_KEY"));
 
-  const wasm = new Uint8Array(await readFile(wasmPath));
   const signed = JSON.parse(await readFile(signedPath, "utf8")) as SignedMandateFile;
   const m = signed.mandate;
+  const mandateDigest = signed.digest;
+
+  // Idempotency: reuse a prior confirmed install for the same chain + mandate.
+  const manifest = await loadManifest(MANIFEST_PATH);
+  const existing = findRecord(manifest, { kind: "vault-install", chainName, mandateDigest });
+  if (existing?.status === "confirmed") {
+    log("vault_deploy_skipped", {
+      reason: "already_confirmed",
+      chainName,
+      mandateDigest,
+      transactionHash: existing.transactionHash,
+      contractHash: existing.contractHash,
+      packageHash: existing.packageHash,
+    });
+    return {
+      transactionHash: existing.transactionHash,
+      contractHash: existing.contractHash,
+      packageHash: existing.packageHash,
+      skipped: true,
+    };
+  }
 
   if (m.venueAllowlist.length !== m.venueAddresses.length) {
     throw new Error(
@@ -42,6 +85,8 @@ export async function deployVault(): Promise<DeployResult> {
         `(${m.venueAddresses.length}) must be the same length.`,
     );
   }
+
+  const wasm = new Uint8Array(await readFile(wasmPath));
 
   const args = Args.fromMap({
     agent: CLValue.newCLKey(Key.newKey(agentAccountHash)),
@@ -72,12 +117,63 @@ export async function deployVault(): Promise<DeployResult> {
   const result = await rpc.putTransaction(tx);
   const transactionHash = result.transactionHash.toJSON();
 
-  log("vault_deploy_submitted", {
-    transactionHash,
+  log("vault_deploy_submitted", { transactionHash, chainName, mandateDigest });
+
+  // Persist the in-flight submission so a crash mid-confirmation is recoverable.
+  const submittedRecord: DeploymentRecord = {
+    kind: "vault-install",
     chainName,
-    note: "Read the installed contract + package hash from the deploy's named keys on the explorer, then set VAULT_CONTRACT_HASH / VAULT_PACKAGE_HASH.",
+    mandateDigest,
+    transactionHash,
+    status: "submitted",
+    createdAtMs: Date.now(),
+  };
+  await saveManifest(MANIFEST_PATH, upsertRecord(manifest, submittedRecord));
+
+  const outcome = await confirmTransaction(rpc, transactionHash, {
+    timeoutMs: CONFIRM_TIMEOUT_MS,
+    pollIntervalMs: CONFIRM_POLL_INTERVAL_MS,
+    onPoll: (attempt) => log("vault_deploy_poll", { transactionHash, attempt }),
   });
-  return { transactionHash };
+
+  const afterSubmit = await loadManifest(MANIFEST_PATH);
+
+  if (outcome.status !== "success") {
+    const failedRecord: DeploymentRecord = {
+      ...submittedRecord,
+      status: "failed",
+      confirmedAtMs: Date.now(),
+    };
+    await saveManifest(MANIFEST_PATH, upsertRecord(afterSubmit, failedRecord));
+    log("vault_deploy_failed", {
+      transactionHash,
+      status: outcome.status,
+      errorMessage: outcome.errorMessage,
+      attempts: outcome.attempts,
+    });
+    throw new Error(
+      outcome.status === "timeout"
+        ? `Vault install ${transactionHash} not finalized within ${CONFIRM_TIMEOUT_MS}ms`
+        : `Vault install ${transactionHash} reverted on-chain: ${outcome.errorMessage ?? "unknown error"}`,
+    );
+  }
+
+  const confirmedRecord: DeploymentRecord = {
+    ...submittedRecord,
+    status: "confirmed",
+    confirmedAtMs: Date.now(),
+  };
+  await saveManifest(MANIFEST_PATH, upsertRecord(afterSubmit, confirmedRecord));
+
+  log("vault_deploy_confirmed", {
+    transactionHash,
+    blockHash: outcome.blockHash,
+    blockHeight: outcome.blockHeight,
+    cost: outcome.cost,
+    note: "Read the installed contract + package hash from the deploy's named keys on the explorer, then set VAULT_CONTRACT_HASH / VAULT_PACKAGE_HASH (and record them in .deployments.json so fund/agent can reuse them).",
+  });
+
+  return { transactionHash, skipped: false };
 }
 
 const invokedDirectly =
