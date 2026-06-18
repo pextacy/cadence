@@ -136,9 +136,21 @@ export async function runAgent(): Promise<void> {
       await sleep(cfg.pollIntervalMs);
     }
 
-    log("settling", { sold: state.soldSoFar.toString(), bought: state.boughtSoFar.toString() });
-    const settleTx = await vault.settle();
-    log("settled", { settleTx });
+    // Settlement is only valid once the cap is reached or the window has closed;
+    // the contract reverts otherwise. After a circuit-breaker pause (neither
+    // condition met) leave the vault for the treasury to resume or settle.
+    const completed = state.soldSoFar >= mandate.totalSell;
+    const windowClosed = Date.now() > mandate.endTimeMs;
+    if (completed || windowClosed) {
+      log("settling", { sold: state.soldSoFar.toString(), bought: state.boughtSoFar.toString() });
+      const settleTx = await vault.settle();
+      log("settled", { settleTx });
+    } else {
+      log("settle_skipped", {
+        reason: "vault paused before completion/deadline; left for treasury",
+        sold: state.soldSoFar.toString(),
+      });
+    }
   } finally {
     await market.close();
   }

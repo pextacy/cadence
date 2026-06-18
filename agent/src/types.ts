@@ -18,6 +18,9 @@ export interface RuntimeMandate {
   priceFloor: bigint; // 0n == unset
   priceCeiling: bigint; // 0n == unset
   venueAllowlist: readonly string[];
+  /** Mandate-bound destination address per venue, index-aligned with
+   * `venueAllowlist`. The vault enforces these on-chain. */
+  venueAddresses: readonly string[];
   strategy: Strategy;
 }
 

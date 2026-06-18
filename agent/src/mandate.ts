@@ -30,6 +30,7 @@ export function toRuntimeMandate(m: Mandate): RuntimeMandate {
     priceFloor: BigInt(m.priceFloor),
     priceCeiling: BigInt(m.priceCeiling),
     venueAllowlist: m.venueAllowlist,
+    venueAddresses: m.venueAddresses,
     strategy: m.strategy,
   };
 }

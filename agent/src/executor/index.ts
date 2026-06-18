@@ -100,7 +100,6 @@ export class Executor {
           quotedOut: quote.quotedOut,
           minOut,
           venue: quote.venue,
-          venueAddress: quote.venueAddress,
         }),
       );
     } catch (err) {

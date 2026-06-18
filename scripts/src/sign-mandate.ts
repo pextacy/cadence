@@ -34,7 +34,21 @@ async function main(): Promise<void> {
   const totalHuman = requireEnv("MANDATE_TOTAL_SIZE");
   const windowHours = Number(process.env.MANDATE_WINDOW_HOURS ?? "72");
   const slippagePct = Number(process.env.MANDATE_SLIPPAGE_PCT ?? "1.0");
-  const venues = (process.env.VENUE_ALLOWLIST ?? "cspr.trade").split(",").map((v) => v.trim());
+  const venues = (process.env.VENUE_ALLOWLIST ?? "cspr.trade")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+  const venueAddresses = (process.env.VENUE_ADDRESSES ?? "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+  if (venueAddresses.length !== venues.length) {
+    throw new Error(
+      `VENUE_ADDRESSES must list one Casper address per venue in VENUE_ALLOWLIST ` +
+        `(${venues.length} venue(s), got ${venueAddresses.length} address(es)). ` +
+        `The vault releases each slice only to these mandate-bound addresses.`,
+    );
+  }
   const chainName = networkChainName();
   const treasuryKey = requireEnv("TREASURY_PRIVATE_KEY");
   const outPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
@@ -54,6 +68,7 @@ async function main(): Promise<void> {
     priceCeiling: toFixedPrice(process.env.MANDATE_PRICE_CEILING),
     strategy: (process.env.MANDATE_STRATEGY as Mandate["strategy"]) ?? "TWAP",
     venueAllowlist: venues,
+    venueAddresses,
     nonce: randomNonce(),
   };
 
