@@ -8,8 +8,8 @@
 use odra::casper_types::U256;
 use odra::prelude::*;
 
-/// Emitted on every balance movement, including mints (`from` is the minter-less
-/// holder receiving freshly minted units is reported via [`Mint`]).
+/// Emitted when balance moves between holders via `transfer` / `transfer_from`.
+/// Freshly minted units are reported separately via [`Mint`], not here.
 #[odra::event]
 pub struct Transfer {
     pub from: Address,

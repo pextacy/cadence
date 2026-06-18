@@ -81,7 +81,7 @@ Build everything and run the test suites:
 
 ```bash
 # Contracts — runs every contract's tests (vault + CEP-18 + x402 token).
-# Build a deployable wasm per crate with `cargo odra build -b casper` (see contracts/README.md).
+# Build a deployable wasm per crate with `./build-wasm.sh` (see contracts/README.md).
 cd contracts && cargo test && cd ..
 
 # TypeScript — mandate, agent and dashboard unit tests + builds
@@ -125,7 +125,7 @@ saved versus a naive single sell, and an attempted out-of-bounds trade is visibl
 - **Verified by `npm test`** — EIP-712 sign/verify and tamper-rejection (mandate),
   guardrail parity with the contract, slippage/price/min-out math, the planner
   output schema, the x402 payment-payload construction + signature round-trip, and
-  the dashboard event reducer + metrics. (43 tests across packages.)
+  the dashboard event reducer + metrics. (46 tests across packages.)
 - **Requires a configured testnet + keys** — deploying the vault, funding it, live
   swaps via CSPR.trade, x402 premium-data calls, and CSPR.cloud streaming. These
   run against the real endpoints; the only blanks are the `.env` values.

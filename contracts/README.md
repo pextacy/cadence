@@ -32,11 +32,17 @@ cargo test
 # Lint.
 cargo clippy --all-targets
 
-# Build a deployable wasm for one contract (writes <crate>/wasm/<Contract>.wasm).
-cd vault       && cargo odra build -b casper && cd ..
-cd cep18       && cargo odra build -b casper && cd ..
-cd x402-token  && cargo odra build -b casper && cd ..
+# Build a deployable wasm for every contract (writes <crate>/wasm/<Contract>.wasm).
+./build-wasm.sh
 ```
+
+`build-wasm.sh` compiles each crate's contract binary for `wasm32-unknown-unknown`,
+then lowers it to MVP WebAssembly (`wasm-opt` strips the bulk-memory and
+sign-extension opcodes the Casper engine rejects) and writes the result to each
+crate's `wasm/` directory — the path the deploy script reads. It replaces
+`cargo odra build`, whose copy step assumes a per-crate target dir and fails in a
+Cargo workspace where all crates share one `target/`. Requires `wabt`/`binaryen`
+(`wasm-strip`, `wasm-opt`) on `PATH`.
 
 Tests verified by `cargo test` (21 total): the vault's ten guardrail/lifecycle
 tests, the CEP-18 token's six (mint/transfer/approve/transfer_from), and the

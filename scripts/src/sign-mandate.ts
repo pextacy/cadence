@@ -24,7 +24,8 @@ function randomNonce(): string {
 
 /**
  * Build a mandate from environment configuration and sign it with the treasury
- * key, binding it to the deployed vault package. Writes the signed mandate to
+ * key under the chain-scoped EIP-712 domain (not bound to any vault package — the
+ * vault commits to this signed digest on `init`). Writes the signed mandate to
  * `SIGNED_MANDATE_PATH`. Runs fully offline — no chain access required.
  */
 async function main(): Promise<void> {

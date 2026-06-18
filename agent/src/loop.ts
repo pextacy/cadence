@@ -75,7 +75,9 @@ export async function runAgent(): Promise<void> {
     market,
     sellToken: cfg.sellAsset,
     buyToken: cfg.buyAsset,
-    proceedsRecipient: agentAccountHash,
+    // Non-custodial: swap proceeds settle directly to the treasury, never the
+    // agent. The agent holds no treasury funds (see CLAUDE.md §4.1).
+    proceedsRecipient: cfg.treasuryAccountHash,
   });
 
   // The contract is the authority on state; the agent tracks its own submissions
