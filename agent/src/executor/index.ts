@@ -22,7 +22,8 @@ export interface ExecutorDeps {
   market: CsprTradeClient;
   sellToken: string;
   buyToken: string;
-  /** Recipient of swap proceeds — the vault's own identity. */
+  /** Recipient of swap proceeds — the treasury account hash. The agent is never
+   *  the recipient, so it custodies no funds. */
   proceedsRecipient: string;
 }
 

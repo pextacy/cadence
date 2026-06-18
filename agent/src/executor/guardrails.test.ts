@@ -6,6 +6,8 @@ const NOW = 1_000_000;
 
 function mandate(over: Partial<RuntimeMandate> = {}): RuntimeMandate {
   return {
+    sellAsset: "CSPR",
+    buyAsset: "USDC",
     totalSell: 1_000_000n,
     endTimeMs: NOW + 1_000_000,
     maxSlippageBps: 100,

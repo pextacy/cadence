@@ -1,57 +1,19 @@
-import { loadConfig, type Config } from "./config.js";
+import { loadConfig } from "./config.js";
 import { CsprTradeClient } from "./clients/csprTrade.js";
 import { VaultClient } from "./clients/vault.js";
-import { fetchWithX402 } from "./clients/x402.js";
 import { Planner } from "./planner/index.js";
 import { Executor } from "./executor/index.js";
+import {
+  evaluateBreaker,
+  INITIAL_BREAKER,
+  DEFAULT_BREAKER_CONFIG,
+  type BreakerSnapshot,
+  type SliceOutcomeKind,
+} from "./executor/circuit-breaker/breaker.js";
+import { realisedVolatilityBps } from "./executor/circuit-breaker/volatility.js";
 import { loadSignedMandate, toRuntimeMandate } from "./mandate.js";
-import { priceFixed } from "./units.js";
+import { buildSnapshot, log, sleep, TARGET_SLICES, PRICE_HISTORY_MAX } from "./runtime.js";
 import type { MarketSnapshot, RuntimeMandate, VaultState } from "./types.js";
-
-const REFERENCE_QUOTE_AMOUNT = 1_000_000n;
-const TARGET_SLICES = 10;
-
-/** A structured log line the dashboard/operator can follow. */
-function log(event: string, detail: Record<string, unknown> = {}): void {
-  console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...detail }));
-}
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-/** Build a market snapshot, paying for premium depth/volatility via x402 if set. */
-async function buildSnapshot(
-  cfg: Config,
-  market: CsprTradeClient,
-  agentAccountHash: string,
-): Promise<MarketSnapshot> {
-  const ref = await market.getQuote({
-    tokenIn: cfg.sellAsset,
-    tokenOut: cfg.buyAsset,
-    amount: REFERENCE_QUOTE_AMOUNT,
-  });
-  const midPrice = priceFixed(ref.quotedOut, REFERENCE_QUOTE_AMOUNT);
-  const snapshot: MarketSnapshot = { midPrice, takenAtMs: Date.now() };
-
-  if (cfg.x402DepthResource) {
-    try {
-      const { data, proof } = await fetchWithX402<{
-        volatility_bps?: number;
-        depth_sell?: string;
-      }>({
-        resourceUrl: cfg.x402DepthResource,
-        network: `casper:${cfg.chainName}`,
-        from: agentAccountHash,
-        privateKeyHex: cfg.agentPrivateKeyHex,
-      });
-      if (typeof data.volatility_bps === "number") snapshot.volatilityBps = data.volatility_bps;
-      if (data.depth_sell) snapshot.depthSell = BigInt(data.depth_sell);
-      log("x402_payment", { resource: proof.resource, amount: proof.amount, asset: proof.asset });
-    } catch (err) {
-      log("x402_skipped", { reason: err instanceof Error ? err.message : String(err) });
-    }
-  }
-  return snapshot;
-}
 
 /** Run the full execution loop until the order completes or the window closes. */
 export async function runAgent(): Promise<void> {
@@ -73,14 +35,15 @@ export async function runAgent(): Promise<void> {
   const executor = new Executor({
     vault,
     market,
-    sellToken: cfg.sellAsset,
-    buyToken: cfg.buyAsset,
-    proceedsRecipient: agentAccountHash,
+    sellToken: mandate.sellAsset,
+    buyToken: mandate.buyAsset,
+    // Proceeds go to the treasury, never the agent — the agent custodies no funds.
+    proceedsRecipient: cfg.treasuryAccountHash,
   });
 
   // The contract is the authority on state; the agent tracks its own submissions
   // and the dashboard reconstructs authoritative state from on-chain events.
-  const state: VaultState = {
+  let state: VaultState = {
     status: "Active",
     soldSoFar: 0n,
     boughtSoFar: 0n,
@@ -92,11 +55,37 @@ export async function runAgent(): Promise<void> {
     totalSell: mandate.totalSell.toString(),
     endTimeMs: mandate.endTimeMs,
     venue: mandate.venueAllowlist,
+    strategy: mandate.strategy,
   });
+
+  // The circuit breaker is consulted before each slice; price history backs the
+  // realised-volatility estimate used when premium volatility is not purchased.
+  let breaker: BreakerSnapshot = INITIAL_BREAKER;
+  let lastOutcome: SliceOutcomeKind | undefined;
+  let priceHistory: readonly bigint[] = [];
+  // When the agent pauses (circuit breaker or executor), it leaves funds safe in
+  // the vault rather than settling — settlement is only for natural completion.
+  let paused = false;
 
   try {
     while (state.soldSoFar < mandate.totalSell && Date.now() <= mandate.endTimeMs) {
-      const snapshot = await buildSnapshot(cfg, market, agentAccountHash);
+      const baseSnapshot = await buildSnapshot(cfg, market, agentAccountHash, mandate.sellAsset, mandate.buyAsset);
+      priceHistory = [...priceHistory, baseSnapshot.midPrice].slice(-PRICE_HISTORY_MAX);
+
+      // Prefer purchased volatility; otherwise fall back to a realised estimate
+      // computed from the agent's own mid-price samples (no fabricated data).
+      const volatilityBps = baseSnapshot.volatilityBps ?? realisedVolatilityBps(priceHistory);
+      const snapshot: MarketSnapshot =
+        volatilityBps === undefined ? baseSnapshot : { ...baseSnapshot, volatilityBps };
+
+      breaker = evaluateBreaker(breaker, { volatilityBps, lastOutcome }, DEFAULT_BREAKER_CONFIG);
+      if (breaker.state === "open") {
+        log("circuit_breaker_open", { reason: breaker.reason, volatilityBps });
+        await vault.pause();
+        paused = true;
+        break;
+      }
+
       const proposal = await planner.propose({
         mandate,
         state,
@@ -112,9 +101,13 @@ export async function runAgent(): Promise<void> {
 
       const outcome = await executor.executeOnce(mandate, state, proposal, Date.now());
       if (outcome.status === "filled") {
-        state.soldSoFar += outcome.sellAmount;
-        state.boughtSoFar += outcome.boughtAmount;
-        state.sliceCount += 1;
+        state = {
+          ...state,
+          soldSoFar: state.soldSoFar + outcome.sellAmount,
+          boughtSoFar: state.boughtSoFar + outcome.boughtAmount,
+          sliceCount: state.sliceCount + 1,
+        };
+        lastOutcome = "filled";
         log("slice_filled", {
           sliceId: outcome.sliceId,
           sliceTx: outcome.sliceTxHash,
@@ -123,20 +116,29 @@ export async function runAgent(): Promise<void> {
           bought: state.boughtSoFar.toString(),
         });
       } else if (outcome.status === "skipped") {
+        lastOutcome = "skipped";
         log("slice_skipped", { code: outcome.code, message: outcome.message });
         if (outcome.code === "SpendCapExceeded" || outcome.code === "DeadlinePassed") break;
       } else {
+        lastOutcome = "paused";
         log("paused", { reason: outcome.reason });
         await vault.pause();
+        paused = true;
         break;
       }
 
       await sleep(cfg.pollIntervalMs);
     }
 
-    log("settling", { sold: state.soldSoFar.toString(), bought: state.boughtSoFar.toString() });
-    const settleTx = await vault.settle();
-    log("settled", { settleTx });
+    if (paused) {
+      // Funds remain safe in the vault; settle() can be called after the window
+      // closes (by anyone) to return the remainder to the treasury.
+      log("agent_stopped_paused", { sold: state.soldSoFar.toString(), bought: state.boughtSoFar.toString() });
+    } else {
+      log("settling", { sold: state.soldSoFar.toString(), bought: state.boughtSoFar.toString() });
+      const settleTx = await vault.settle();
+      log("settled", { settleTx });
+    }
   } finally {
     await market.close();
   }

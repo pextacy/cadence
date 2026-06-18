@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  addressFromPrivateKey,
   buildMandateDomain,
   humanSummary,
   signMandate,
@@ -7,6 +8,12 @@ import {
   type Mandate,
   type SignedMandate,
 } from "@cadence/mandate";
+
+/** Placeholder treasury shown before a signing key is entered; signMandate binds
+ *  the real signer address on sign, so this never reaches a signed mandate. */
+const UNSET_TREASURY = "0x" + "00".repeat(20);
+
+const KEY_RE = /^(0x)?[0-9a-fA-F]{64}$/;
 import type { DashboardConfig } from "../config.js";
 
 interface Form {
@@ -18,7 +25,7 @@ interface Form {
   slippagePct: string;
   priceFloor: string;
   priceCeiling: string;
-  strategy: "TWAP" | "VWAP";
+  strategy: "TWAP" | "VWAP" | "ADAPTIVE";
   venue: string;
   devKey: string;
 }
@@ -57,7 +64,7 @@ export function CreateMandate({ config }: { config: DashboardConfig }): JSX.Elem
   const { mandate, errors } = useMemo(() => buildMandate(form), [form]);
 
   const summary = mandate ? humanSummary(mandate) : null;
-  const canSign = mandate !== null && /^(0x)?[0-9a-fA-F]{64}$/.test(form.devKey);
+  const canSign = mandate !== null && KEY_RE.test(form.devKey);
 
   function onSign() {
     setSignError(null);
@@ -136,6 +143,7 @@ export function CreateMandate({ config }: { config: DashboardConfig }): JSX.Elem
             <select id="strategy" value={form.strategy} onChange={(e) => set("strategy", e.target.value as Form["strategy"])}>
               <option value="TWAP">TWAP (time-weighted)</option>
               <option value="VWAP">VWAP (volume-weighted)</option>
+              <option value="ADAPTIVE">Adaptive (volatility-aware)</option>
             </select>
           </div>
         </div>
@@ -226,9 +234,13 @@ function buildMandate(form: Form): BuildResult {
 
   if (Object.keys(errors).length > 0) return { mandate: null, errors };
 
+  // Derive the treasury from the signing key when present so the preview and
+  // EIP-712 digest match what will actually be signed; signMandate re-binds it.
+  const treasury = KEY_RE.test(form.devKey) ? addressFromPrivateKey(form.devKey) : UNSET_TREASURY;
+
   const mandate: Mandate = {
     version: 1,
-    treasury: "0x" + "00".repeat(20),
+    treasury,
     sellAsset: form.sellAsset,
     buyAsset: form.buyAsset,
     totalSellAmount: total.toString(),

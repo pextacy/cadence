@@ -24,6 +24,8 @@ export async function loadSignedMandate(path: string): Promise<SignedMandateFile
  */
 export function toRuntimeMandate(m: Mandate): RuntimeMandate {
   return {
+    sellAsset: m.sellAsset,
+    buyAsset: m.buyAsset,
     totalSell: BigInt(m.totalSellAmount),
     endTimeMs: m.endTime * 1000,
     maxSlippageBps: m.maxSlippageBps,

@@ -38,7 +38,7 @@ export function toBaseUnits(human: string, asset: string): bigint {
   return BigInt((whole || "0") + fracPadded);
 }
 
-export type Strategy = "TWAP" | "VWAP";
+export type Strategy = "TWAP" | "VWAP" | "ADAPTIVE";
 
 /**
  * A mandate is the single artefact the treasurer signs. Amounts are decimal

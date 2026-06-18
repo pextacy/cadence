@@ -18,6 +18,9 @@ const ConfigSchema = z.object({
   x402FacilitatorUrl: z.string().url().optional(),
   x402DepthResource: z.string().url().optional(),
   agentPrivateKeyHex: z.string().regex(/^(0x)?[0-9a-fA-F]{64}$/),
+  /** Casper account-hash that receives swap proceeds (the treasury). The agent is
+   *  never the recipient, so it custodies no funds. */
+  treasuryAccountHash: z.string().min(1),
   llmApiKey: z.string().min(1),
   llmModel: z.string().min(1),
   vaultContractHash: z.string().min(1),
@@ -59,6 +62,7 @@ export function loadConfig(): Config {
     x402FacilitatorUrl: optional("X402_FACILITATOR_URL"),
     x402DepthResource: optional("X402_DEPTH_RESOURCE_URL"),
     agentPrivateKeyHex: required("AGENT_PRIVATE_KEY"),
+    treasuryAccountHash: required("TREASURY_ACCOUNT_HASH"),
     llmApiKey: required("LLM_API_KEY"),
     llmModel: process.env.LLM_MODEL ?? "claude-sonnet-4-6",
     vaultContractHash: required("VAULT_CONTRACT_HASH"),
