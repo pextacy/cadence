@@ -26,7 +26,7 @@ export interface DeployResult {
 export async function deployVault(): Promise<DeployResult> {
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
-  const wasmPath = process.env.VAULT_WASM_PATH ?? "../contracts/wasm/ExecutionVault.wasm";
+  const wasmPath = process.env.VAULT_WASM_PATH ?? "../contracts/vault/wasm/ExecutionVault.wasm";
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
   const agentAccountHash = requireEnv("AGENT_ACCOUNT_HASH"); // "account-hash-…"
   const treasuryKey = loadSecp256k1(requireEnv("TREASURY_PRIVATE_KEY"));
