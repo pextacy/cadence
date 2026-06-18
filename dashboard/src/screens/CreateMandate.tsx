@@ -1,0 +1,251 @@
+import { useMemo, useState } from "react";
+import {
+  buildMandateDomain,
+  humanSummary,
+  signMandate,
+  toBaseUnits,
+  type Mandate,
+  type SignedMandate,
+} from "@cadence/mandate";
+import type { DashboardConfig } from "../config.js";
+
+interface Form {
+  sellAsset: string;
+  buyAsset: string;
+  totalSell: string; // human units
+  startLocal: string; // datetime-local
+  endLocal: string;
+  slippagePct: string;
+  priceFloor: string;
+  priceCeiling: string;
+  strategy: "TWAP" | "VWAP";
+  venue: string;
+  devKey: string;
+}
+
+function toFixedPrice(human: string): string {
+  if (!human.trim()) return "0";
+  const [whole, frac = ""] = human.trim().split(".");
+  const fracPadded = (frac + "0".repeat(9)).slice(0, 9);
+  return BigInt((whole || "0") + fracPadded).toString();
+}
+
+const now = new Date();
+const plus = (h: number) => new Date(now.getTime() + h * 3_600_000).toISOString().slice(0, 16);
+
+const DEFAULTS: Form = {
+  sellAsset: "CSPR",
+  buyAsset: "USDC",
+  totalSell: "2000000",
+  startLocal: plus(0),
+  endLocal: plus(72),
+  slippagePct: "1.00",
+  priceFloor: "",
+  priceCeiling: "",
+  strategy: "TWAP",
+  venue: "cspr.trade",
+  devKey: "",
+};
+
+export function CreateMandate({ config }: { config: DashboardConfig }): JSX.Element {
+  const [form, setForm] = useState<Form>(DEFAULTS);
+  const [signed, setSigned] = useState<SignedMandate | null>(null);
+  const [signError, setSignError] = useState<string | null>(null);
+
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
+
+  const { mandate, errors } = useMemo(() => buildMandate(form), [form]);
+
+  const summary = mandate ? humanSummary(mandate) : null;
+  const canSign = mandate !== null && /^(0x)?[0-9a-fA-F]{64}$/.test(form.devKey);
+
+  function onSign() {
+    setSignError(null);
+    if (!mandate) return;
+    try {
+      const domain = buildMandateDomain(config.chainName);
+      const result = signMandate(mandate, domain, form.devKey);
+      setSigned(result);
+    } catch (err) {
+      setSignError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function download() {
+    if (!signed) return;
+    const blob = new Blob([JSON.stringify(signed, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "mandate.signed.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div>
+      <div className="page-head">
+        <span className="eyebrow">01 · Mandate</span>
+        <h1>Authorise the whole execution once</h1>
+        <p className="lede">
+          One signed mandate sets the limits the agent works inside. No per-trade approvals, no gas
+          to sign — and the vault enforces every field on-chain.
+        </p>
+      </div>
+      <div className="card reveal">
+        <h2>Order</h2>
+        <p className="sub">What to sell, what to buy, and how much.</p>
+
+        <div className="row2">
+          <div className="field">
+            <label htmlFor="sell">Sell asset</label>
+            <input id="sell" value={form.sellAsset} onChange={(e) => set("sellAsset", e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="buy">Buy asset</label>
+            <input id="buy" value={form.buyAsset} onChange={(e) => set("buyAsset", e.target.value)} />
+          </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor="amount">Total size ({form.sellAsset})</label>
+          <input id="amount" inputMode="decimal" value={form.totalSell} onChange={(e) => set("totalSell", e.target.value)} />
+          {errors.totalSell && <div className="error">{errors.totalSell}</div>}
+        </div>
+
+        <div className="row2">
+          <div className="field">
+            <label htmlFor="start">Window start</label>
+            <input id="start" type="datetime-local" value={form.startLocal} onChange={(e) => set("startLocal", e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="end">Window end</label>
+            <input id="end" type="datetime-local" value={form.endLocal} onChange={(e) => set("endLocal", e.target.value)} />
+            {errors.window && <div className="error">{errors.window}</div>}
+          </div>
+        </div>
+
+        <div className="row2">
+          <div className="field">
+            <label htmlFor="slip">Max slippage (%)</label>
+            <input id="slip" inputMode="decimal" value={form.slippagePct} onChange={(e) => set("slippagePct", e.target.value)} />
+            {errors.slippage && <div className="error">{errors.slippage}</div>}
+          </div>
+          <div className="field">
+            <label htmlFor="strategy">Strategy</label>
+            <select id="strategy" value={form.strategy} onChange={(e) => set("strategy", e.target.value as Form["strategy"])}>
+              <option value="TWAP">TWAP (time-weighted)</option>
+              <option value="VWAP">VWAP (volume-weighted)</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="row2">
+          <div className="field">
+            <label htmlFor="floor">Price floor ({form.buyAsset}/{form.sellAsset}, optional)</label>
+            <input id="floor" inputMode="decimal" value={form.priceFloor} onChange={(e) => set("priceFloor", e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="ceil">Price ceiling (optional)</label>
+            <input id="ceil" inputMode="decimal" value={form.priceCeiling} onChange={(e) => set("priceCeiling", e.target.value)} />
+          </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor="venue">Venue allowlist</label>
+          <input id="venue" value={form.venue} onChange={(e) => set("venue", e.target.value)} />
+          <div className="hint">Comma-separated. The vault rejects any swap to a venue not on this list.</div>
+        </div>
+      </div>
+
+      <div className="card reveal">
+        <h2>What you are authorising</h2>
+        {summary ? <div className="summary">{summary}</div> : <div className="error">Fix the fields above to preview the mandate.</div>}
+
+        <div className="warn">
+          Development signer: paste a secp256k1 private key to sign locally. In production the
+          treasurer signs with their wallet (CSPR.click) — the key never leaves it.
+        </div>
+        <div className="field">
+          <label htmlFor="devkey">Signing key (secp256k1, 32-byte hex)</label>
+          <input id="devkey" type="password" value={form.devKey} placeholder="0x…" onChange={(e) => set("devKey", e.target.value)} />
+        </div>
+
+        <div className="controls">
+          <button className="btn" disabled={!canSign} onClick={onSign}>Sign mandate</button>
+          {signed && <button className="btn secondary" onClick={download}>Download signed mandate</button>}
+        </div>
+        {signError && <div className="error" style={{ marginTop: 10 }}>{signError}</div>}
+
+        {signed && (
+          <div style={{ marginTop: 16 }}>
+            <div className="field">
+              <label>EIP-712 digest</label>
+              <div className="codeblock">{signed.digest}</div>
+            </div>
+            <div className="field">
+              <label>Signature</label>
+              <div className="codeblock">{signed.signature}</div>
+            </div>
+            <div className="field">
+              <label>Recovered signer</label>
+              <div className="codeblock">{signed.signer}</div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface BuildResult {
+  mandate: Mandate | null;
+  errors: { totalSell?: string; window?: string; slippage?: string };
+}
+
+function buildMandate(form: Form): BuildResult {
+  const errors: BuildResult["errors"] = {};
+  let total = 0n;
+  try {
+    total = toBaseUnits(form.totalSell, form.sellAsset);
+    if (total <= 0n) errors.totalSell = "Total size must be greater than zero.";
+  } catch {
+    errors.totalSell = "Enter a valid number.";
+  }
+
+  const start = Math.floor(new Date(form.startLocal).getTime() / 1000);
+  const end = Math.floor(new Date(form.endLocal).getTime() / 1000);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    errors.window = "Window end must be after the start.";
+  }
+
+  const slipPct = Number(form.slippagePct);
+  if (!Number.isFinite(slipPct) || slipPct < 0 || slipPct > 100) {
+    errors.slippage = "Slippage must be between 0 and 100%.";
+  }
+
+  if (Object.keys(errors).length > 0) return { mandate: null, errors };
+
+  const mandate: Mandate = {
+    version: 1,
+    treasury: "0x" + "00".repeat(20),
+    sellAsset: form.sellAsset,
+    buyAsset: form.buyAsset,
+    totalSellAmount: total.toString(),
+    startTime: start,
+    endTime: end,
+    maxSlippageBps: Math.round(slipPct * 100),
+    priceFloor: toFixedPrice(form.priceFloor),
+    priceCeiling: toFixedPrice(form.priceCeiling),
+    strategy: form.strategy,
+    venueAllowlist: form.venue.split(",").map((v) => v.trim()).filter(Boolean),
+    nonce: randomNonce(),
+  };
+  return { mandate, errors };
+}
+
+function randomNonce(): string {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return "0x" + Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}

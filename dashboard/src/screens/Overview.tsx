@@ -1,0 +1,92 @@
+import { Link } from "react-router-dom";
+import { useDesk } from "../App.js";
+import { deriveMetrics } from "../lib/events.js";
+import { formatAmount, formatDuration, formatBps, formatPrice } from "../lib/format.js";
+import { CadenceStave } from "../components/CadenceStave.js";
+import { NonDataState, Stat, StatusBadge } from "../components/ui.js";
+
+export function Overview(): JSX.Element {
+  const { config, stream, nowMs } = useDesk();
+  const { state, connection } = stream;
+  const metrics = deriveMetrics(state, nowMs, config.naiveBaselinePrice);
+  const live = connection === "open" && state.status !== "Unknown";
+
+  return (
+    <div>
+      <section className="hero reveal">
+        <span className="eyebrow">Autonomous OTC execution · Casper</span>
+        <h1 style={{ marginTop: 14 }}>
+          Move size without <span className="accent">moving the market.</span>
+        </h1>
+        <p className="lede">
+          Sign one mandate. An autonomous agent slices the order into a measured cadence of child
+          trades and executes them over time, while an on-chain vault enforces every limit it cannot
+          exceed.
+        </p>
+        <div className="controls">
+          <Link className="btn" to="/mandate">
+            Create a mandate
+          </Link>
+          <Link className="btn secondary" to="/execution">
+            Watch execution
+          </Link>
+        </div>
+      </section>
+
+      <div className="hero-grid">
+        <div className="reveal">
+          {live ? (
+            <>
+              <div className="stat-grid" style={{ marginBottom: 20 }}>
+                <Stat label="Status" value={state.status} />
+                <Stat label="Remaining" value={formatAmount(metrics.remaining, config.sellAsset)} unit={config.sellAsset} />
+                <Stat
+                  label="Avg price"
+                  value={metrics.averagePrice !== null ? formatPrice(metrics.averagePrice) : null}
+                />
+                <Stat
+                  label="Time left"
+                  value={metrics.timeLeftMs !== null ? formatDuration(metrics.timeLeftMs) : null}
+                />
+              </div>
+              <CadenceStave state={state} metrics={metrics} sellAsset={config.sellAsset} nowMs={nowMs} compact />
+            </>
+          ) : (
+            <div className="card" style={{ marginBottom: 0 }}>
+              <h2>Desk status</h2>
+              <p className="sub">Live state streams in from the vault's on-chain events.</p>
+              <NonDataState kind="empty" title="No active mandate connected">
+                Sign and fund a mandate, then configure streaming to watch the desk work in real
+                time. Until then this stays empty — never sample numbers.
+              </NonDataState>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="principle reveal" style={{ marginBottom: 16 }}>
+            <span className="eyebrow">The guardrail principle</span>
+            <p>
+              Spend cap, deadline, slippage, price band, venue and caller are all checked on-chain in
+              one entrypoint. Any breach reverts — the contract is the authority, not the agent.
+            </p>
+          </div>
+          <div className="principle reveal" style={{ marginBottom: 16 }}>
+            <span className="eyebrow">Plan in the agent, enforce in the contract</span>
+            <p>
+              The LLM only proposes the next slice. A deterministic executor and the vault validate
+              every limit, so a hallucination cannot move funds out of bounds.
+            </p>
+          </div>
+          <div className="principle reveal">
+            <span className="eyebrow">Built on Casper</span>
+            <p>
+              Odra vault · EIP-712 mandates · CSPR.trade routing · x402 premium data · CSPR.cloud
+              streaming. Every fill is an explorer link.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

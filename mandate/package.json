@@ -1,0 +1,28 @@
+{
+  "name": "@cadence/mandate",
+  "version": "0.1.0",
+  "description": "Cadence mandate schema, EIP-712 typed-data hashing, signing and verification.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@casper-ecosystem/casper-eip-712": "1.2.1",
+    "@noble/curves": "1.8.1"
+  },
+  "devDependencies": {
+    "typescript": "5.7.3",
+    "vitest": "2.1.8"
+  }
+}

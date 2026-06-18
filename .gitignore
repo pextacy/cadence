@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+**/dist/
+contracts/wasm/
+contracts/target/
+target/
+
+# Rust / Odra
+Cargo.lock
+.backend*
+.builder*
+
+# Secrets & local config
+.env
+.env.local
+*.pem
+mandate.signed.json
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+*.log

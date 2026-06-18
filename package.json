@@ -1,0 +1,21 @@
+{
+  "name": "cadence",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cadence — an agentic OTC execution desk on Casper.",
+  "type": "module",
+  "workspaces": [
+    "mandate",
+    "agent",
+    "scripts",
+    "dashboard"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@cadence/scripts",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "deploy:testnet": "tsx src/deploy.ts",
+    "sign-mandate": "tsx src/sign-mandate.ts",
+    "fund": "tsx src/fund.ts",
+    "demo": "tsx src/demo.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cadence/agent": "0.1.0",
+    "@cadence/mandate": "0.1.0",
+    "casper-js-sdk": "5.0.12",
+    "dotenv": "17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3"
+  }
+}
