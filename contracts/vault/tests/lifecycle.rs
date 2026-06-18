@@ -133,6 +133,40 @@ fn emergency_withdraw_drains_to_treasury_when_paused() {
 }
 
 #[test]
+fn treasury_can_wire_a_guardian_that_pauses() {
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    let guardian = fx.env.get_account(3);
+
+    // An unwired account cannot pause (not agent/treasury/guardian).
+    assert!(!fx.contract.is_guardian(guardian));
+    fx.env.set_caller(guardian);
+    assert_eq!(
+        fx.contract.try_pause().unwrap_err(),
+        Error::NotAgent.into(),
+        "a non-role account must not be able to pause"
+    );
+
+    // Treasury wires the guardian (e.g. the desk-wide Guardian contract).
+    fx.env.set_caller(fx.treasury);
+    fx.contract.set_guardian(guardian);
+    assert!(fx.contract.is_guardian(guardian));
+
+    // The guardian can now pause the vault.
+    fx.env.set_caller(guardian);
+    fx.contract.pause();
+    assert_eq!(fx.contract.get_status(), Status::Paused);
+
+    // Only the treasury may wire a guardian.
+    fx.env.set_caller(fx.agent);
+    assert_eq!(
+        fx.contract.try_set_guardian(fx.agent).unwrap_err(),
+        Error::NotTreasury.into(),
+        "only the treasury may set a guardian"
+    );
+}
+
+#[test]
 fn emergency_withdraw_rejects_non_treasury() {
     let mut fx = deploy_with(U512::zero(), U512::zero());
     fund(&mut fx);

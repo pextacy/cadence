@@ -4,6 +4,8 @@ use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::{PublicKey, U512};
 use odra::prelude::*;
 
+use cadence_access_control::roles;
+
 use super::errors::Error;
 use super::events::{MandateInitialised, MandateVerified, VaultFunded};
 use super::status::Status;
@@ -91,6 +93,15 @@ impl ExecutionVault {
         }
         // blake2b hash of the verified preimage, for the audit event.
         let preimage_hash = Bytes::from(self.env().hash(preimage.as_slice()).to_vec());
+
+        // Bootstrap RBAC: the treasury is ROOT_ADMIN (so it can later wire a
+        // GUARDIAN, e.g. the desk Guardian contract, via `set_guardian`) and holds
+        // TREASURY + GUARDIAN; the agent holds AGENT. Role checks run through the
+        // composed AccessControl from here on.
+        self.ac.grant_unchecked(roles::ROOT_ADMIN, treasury, treasury);
+        self.ac.grant_unchecked(roles::TREASURY, treasury, treasury);
+        self.ac.grant_unchecked(roles::AGENT, agent, treasury);
+        self.ac.grant_unchecked(roles::GUARDIAN, treasury, treasury);
 
         self.treasury.set(treasury);
         self.agent.set(agent);

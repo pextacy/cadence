@@ -104,6 +104,16 @@ impl ExecutionVault {
         self.settle_impl()
     }
 
+    /// Treasury wires/rotates the GUARDIAN role (e.g. to the desk Guardian contract).
+    pub fn set_guardian(&mut self, guardian: Address) {
+        self.set_guardian_impl(guardian)
+    }
+
+    /// Whether `who` holds the GUARDIAN role.
+    pub fn is_guardian(&self, who: Address) -> bool {
+        self.ac.has_role(cadence_access_control::roles::GUARDIAN, who)
+    }
+
     pub fn get_status(&self) -> Status {
         self.get_status_impl()
     }

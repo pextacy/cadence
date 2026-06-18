@@ -9,6 +9,8 @@ use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::{PublicKey, U512};
 use odra::prelude::*;
 
+use cadence_access_control::{roles, AccessControl};
+
 use super::events::{
     DecisionAttested, EmergencyWithdrawn, FillRecorded, MandateInitialised, MandateVerified,
     Settled, SliceExecuted, StatusChanged, VaultFunded,
@@ -74,6 +76,12 @@ pub struct ExecutionVault {
     pub(super) slice_filled: Mapping<u32, bool>,
 
     pub(super) status: Var<Status>,
+
+    /// Role-based access control. Composed (never deployed standalone) so the
+    /// vault shares the desk-wide RBAC vocabulary: TREASURY/AGENT/GUARDIAN are
+    /// bootstrapped at `init`, and a GUARDIAN (e.g. the desk Guardian contract)
+    /// can pause/resume alongside the agent and treasury.
+    pub(super) ac: SubModule<AccessControl>,
 }
 
 impl ExecutionVault {
@@ -82,26 +90,30 @@ impl ExecutionVault {
         self.status.get_or_revert_with(Error::NotFunded)
     }
 
-    /// Revert unless the caller is the stored treasury.
+    /// Revert unless the caller holds the TREASURY role. Authorization now runs
+    /// through the composed AccessControl, but the vault keeps its own error
+    /// codes (the role is bootstrapped to the stored treasury at `init`).
     pub(super) fn assert_treasury(&self) {
-        if self.env().caller() != self.treasury.get_or_revert_with(Error::NotTreasury) {
+        if !self.ac.has_role(roles::TREASURY, self.env().caller()) {
             self.env().revert(Error::NotTreasury);
         }
     }
 
-    /// Revert unless the caller is the stored agent identity.
+    /// Revert unless the caller holds the AGENT role.
     pub(super) fn assert_agent(&self) {
-        if self.env().caller() != self.agent.get_or_revert_with(Error::NotAgent) {
+        if !self.ac.has_role(roles::AGENT, self.env().caller()) {
             self.env().revert(Error::NotAgent);
         }
     }
 
-    /// Revert unless the caller is either the agent or the treasury.
-    pub(super) fn assert_agent_or_treasury(&self) {
+    /// Revert unless the caller may operate the circuit breaker: the agent, the
+    /// treasury, or a GUARDIAN (e.g. the desk-wide Guardian contract).
+    pub(super) fn assert_can_pause(&self) {
         let caller = self.env().caller();
-        let is_agent = caller == self.agent.get_or_revert_with(Error::NotAgent);
-        let is_treasury = caller == self.treasury.get_or_revert_with(Error::NotTreasury);
-        if !is_agent && !is_treasury {
+        if !self.ac.has_role(roles::AGENT, caller)
+            && !self.ac.has_role(roles::TREASURY, caller)
+            && !self.ac.has_role(roles::GUARDIAN, caller)
+        {
             self.env().revert(Error::NotAgent);
         }
     }

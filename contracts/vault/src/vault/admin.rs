@@ -3,15 +3,18 @@
 
 use odra::prelude::*;
 
+use cadence_access_control::roles;
+
 use super::errors::Error;
 use super::events::{EmergencyWithdrawn, Settled, StatusChanged};
 use super::status::Status;
 use super::storage::ExecutionVault;
 
 impl ExecutionVault {
-    /// Circuit-breaker: pause execution. Agent or treasury may call.
+    /// Circuit-breaker: pause execution. Agent, treasury, or GUARDIAN may call
+    /// (the GUARDIAN role lets the desk-wide Guardian contract pause this vault).
     pub(super) fn pause_impl(&mut self) {
-        self.assert_agent_or_treasury();
+        self.assert_can_pause();
         if self.read_status() != Status::Active {
             self.env().revert(Error::NotActive);
         }
@@ -19,14 +22,23 @@ impl ExecutionVault {
         self.env().emit_event(StatusChanged { paused: true });
     }
 
-    /// Resume after a pause. Agent or treasury may call.
+    /// Resume after a pause. Agent, treasury, or GUARDIAN may call.
     pub(super) fn resume_impl(&mut self) {
-        self.assert_agent_or_treasury();
+        self.assert_can_pause();
         if self.read_status() != Status::Paused {
             self.env().revert(Error::NotActive);
         }
         self.status.set(Status::Active);
         self.env().emit_event(StatusChanged { paused: false });
+    }
+
+    /// Treasury wires (or rotates) the GUARDIAN role to `guardian` — typically the
+    /// desk-wide Guardian contract, so it can pause this vault in a global halt.
+    /// Treasury-only; the treasury retains its own GUARDIAN role.
+    pub(super) fn set_guardian_impl(&mut self, guardian: Address) {
+        self.assert_treasury();
+        let by = self.env().caller();
+        self.ac.grant_unchecked(roles::GUARDIAN, guardian, by);
     }
 
     /// Emergency drain. **Treasury only**, and only while the vault is `Paused`.
