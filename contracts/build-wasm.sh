@@ -22,6 +22,10 @@ CONTRACTS=(
   "vault:cadence_vault_build_contract:ExecutionVault"
   "cep18:cadence_cep18_build_contract:Cep18"
   "x402-token:cadence_x402_token_build_contract:X402Token"
+  "access-control:cadence_access_control_build_contract:AccessControlContract"
+  "dex-adapter:cadence_dex_adapter_build_contract:SettlementAdapter"
+  "dex-adapter:cadence_dex_adapter_build_contract:Cep18SwapAdapter"
+  "price-oracle:cadence_price_oracle_build_contract:SignedPriceOracle"
 )
 
 for entry in "${CONTRACTS[@]}"; do

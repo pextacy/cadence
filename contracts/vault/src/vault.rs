@@ -7,15 +7,40 @@
 //! per-slice slippage, price band, venue allowlist and caller authority. If any
 //! check fails the call reverts — this is the guardrail the agent cannot bypass.
 //!
-//! The mandate is authorised off-chain with an EIP-712 typed-data signature
-//! (gasless, human-readable). The treasurer's account is the caller of `init`, so
-//! authority is established by the Casper-authenticated sender; the EIP-712 digest
-//! and signature are bound on-chain (stored + emitted) so anyone can independently
-//! re-derive the digest from the public mandate and verify the signature. See
-//! DOCS.md §4 for the full trust boundary.
+//! ## Two-signature authorization model
+//!
+//! The mandate is authored off-chain with an EIP-712 typed-data signature
+//! (gasless, human-readable). That digest is Ethereum-flavoured (keccak256 +
+//! secp256k1 *recover*) and a Casper contract **cannot** reproduce it: Odra
+//! exposes `env().hash()` (**blake2b**, not keccak256) and
+//! `env().verify_signature(message, signature, public_key)` (verify against a
+//! *supplied* public key, not ecrecover). See the x402-token doc comment
+//! (`contracts/x402-token/src/token.rs`).
+//!
+//! So the vault keeps the EIP-712 digest as the human-readable treasurer artifact
+//! (stored + emitted for off-chain re-derivation) AND verifies a **Casper-native**
+//! authorization on-chain. The treasury signs the canonical [`mandate_message`]
+//! preimage — a domain tag, every enforced limit, and a unique nonce — with their
+//! Casper key. At `init` the vault verifies that the supplied `PublicKey` hashes to
+//! the `treasury` caller and that the signature verifies against the reconstructed
+//! preimage; otherwise it reverts. This binds the on-chain limits provably to the
+//! treasury's signature, closing the gap where the EIP-712 digest was stored but
+//! never cryptographically checked. The pattern mirrors the x402-token
+//! `transfer_with_authorization` flow (token.rs:176-247).
+//!
+//! ### Why the preimage binds the *nonce*, not `self_address`
+//!
+//! x402-token can prefix its preimage with `self_address()` because its
+//! authorizations are signed **after** the token contract exists. A Cadence
+//! mandate is signed **before** the vault is deployed (the vault's `init` *consumes*
+//! the signature), so the vault address is unknowable at signing time — the same
+//! chicken-and-egg the EIP-712 domain documents (`mandate/src/schema.ts`). Cross-
+//! vault replay is therefore prevented by a unique per-mandate `nonce` baked into
+//! the signed preimage (every mandate carries a distinct nonce), exactly as the
+//! off-chain EIP-712 path already relies on. The domain tag versions the scheme.
 
-use odra::casper_types::bytesrepr::Bytes;
-use odra::casper_types::U512;
+use odra::casper_types::bytesrepr::{Bytes, ToBytes};
+use odra::casper_types::{PublicKey, U512};
 use odra::prelude::*;
 
 /// Fixed-point scale for prices expressed as buy-asset units per one sell-asset
@@ -25,6 +50,11 @@ pub const PRICE_SCALE: u64 = 1_000_000_000;
 
 /// Basis-points denominator (100% = 10_000 bps).
 pub const BPS_DENOMINATOR: u64 = 10_000;
+
+/// Domain tag prefixed to every Casper-native mandate preimage. Binds the
+/// authorization to the Cadence mandate scheme (versioned) so a signature can never
+/// be replayed under a different scheme version.
+pub const MANDATE_DOMAIN_TAG: &[u8] = b"Cadence-Mandate-v1";
 
 /// Lifecycle of a vault instance.
 #[odra::odra_type]
@@ -39,6 +69,8 @@ pub enum Status {
     Completed,
     /// Window closed before completion and settled.
     Expired,
+    /// Emergency drain executed by the treasury while paused; terminal.
+    Halted,
 }
 
 /// Emitted once when the mandate is stored.
@@ -53,6 +85,16 @@ pub struct MandateInitialised {
     pub total_sell: U512,
     pub end_time_ms: u64,
     pub max_slippage_bps: u32,
+}
+
+/// Emitted by `init` AFTER a successful on-chain `verify_signature`, recording the
+/// consumed mandate nonce and the blake2b hash of the canonical preimage that was
+/// actually verified — a binding that was checked on-chain, not merely stored.
+#[odra::event]
+pub struct MandateVerified {
+    pub treasury: Address,
+    pub mandate_nonce: Bytes,
+    pub preimage_hash: Bytes,
 }
 
 /// Emitted when the vault receives the sell asset and becomes Active.
@@ -96,6 +138,15 @@ pub struct DecisionAttested {
 #[odra::event]
 pub struct StatusChanged {
     pub paused: bool,
+}
+
+/// Emitted when the treasury triggers the emergency drain. Records who triggered
+/// it, how much was returned, and the progress at the time of the halt.
+#[odra::event]
+pub struct EmergencyWithdrawn {
+    pub by: Address,
+    pub returned_to_treasury: U512,
+    pub sold_so_far: U512,
 }
 
 /// Emitted once on settlement with the final execution report.
@@ -144,17 +195,29 @@ pub enum Error {
     VenueConfigMismatch = 17,
     /// A fill was already recorded for this slice.
     SliceAlreadyFilled = 18,
+    /// The supplied public key does not hash to the `treasury` account.
+    NotAuthorizedSigner = 19,
+    /// The Casper-native mandate signature does not verify against the preimage.
+    BadSignature = 20,
+    /// Failed to serialize the mandate preimage.
+    SerializationError = 21,
+    /// Emergency withdrawal requires the vault to be `Paused`.
+    NotPaused = 22,
+    /// Arithmetic overflow in a guardrail computation.
+    Overflow = 23,
 }
 
 /// The Execution Vault.
 #[odra::module(
     events = [
         MandateInitialised,
+        MandateVerified,
         VaultFunded,
         SliceExecuted,
         FillRecorded,
         DecisionAttested,
         StatusChanged,
+        EmergencyWithdrawn,
         Settled
     ],
     errors = Error
@@ -163,10 +226,17 @@ pub struct ExecutionVault {
     // Identities
     treasury: Var<Address>,
     agent: Var<Address>,
+    /// The treasury's Casper public key, captured at `init` after verification, so
+    /// the Casper-native mandate signature can be independently re-checked on-chain.
+    treasury_public_key: Var<PublicKey>,
 
     // Mandate binding
     mandate_digest: Var<Bytes>,
     signature: Var<Bytes>,
+    /// The Casper-native mandate signature verified on-chain at `init`.
+    casper_signature: Var<Bytes>,
+    /// The consumed mandate nonce (part of the verified preimage).
+    mandate_nonce: Var<Bytes>,
 
     // Decoded limits
     sell_asset: Var<String>,
@@ -181,6 +251,10 @@ pub struct ExecutionVault {
     // venue. Set once at `init` from the signed mandate; the agent cannot supply or
     // override it, so it can never redirect funds to an address it controls.
     venue_addr: Mapping<String, Address>,
+    // Ordered, canonical copies of the venue id / address lists (Odra `Mapping` is
+    // not enumerable). Stored so `verify_mandate` can rebuild the exact preimage.
+    venue_ids: Var<Vec<String>>,
+    venue_addr_list: Var<Vec<Address>>,
 
     // Progress
     sold_so_far: Var<U512>,
@@ -199,6 +273,13 @@ impl ExecutionVault {
     /// treasury. The caller becomes the treasury identity. `agent` is the
     /// account-abstraction identity later authorised to call `execute_slice`.
     ///
+    /// The mandate's authority is established by a **Casper-native** signature:
+    /// `treasury_public_key` must hash to the `init` caller, and `casper_signature`
+    /// must verify against the canonical [`mandate_message`] preimage that encodes
+    /// every enforced limit plus `mandate_nonce`. Either failure reverts, so the
+    /// on-chain limits are provably the ones the treasury signed. The EIP-712
+    /// `mandate_digest` is also stored/emitted for off-chain human re-derivation.
+    ///
     /// Times are in **milliseconds** to match the Casper block time. Prices are
     /// fixed-point with [`PRICE_SCALE`]; pass `0` for an unset floor/ceiling.
     #[allow(clippy::too_many_arguments)]
@@ -207,6 +288,9 @@ impl ExecutionVault {
         agent: Address,
         mandate_digest: Bytes,
         signature: Bytes,
+        treasury_public_key: PublicKey,
+        casper_signature: Bytes,
+        mandate_nonce: Bytes,
         sell_asset: String,
         buy_asset: String,
         total_sell: U512,
@@ -231,11 +315,47 @@ impl ExecutionVault {
             self.env().revert(Error::VenueConfigMismatch);
         }
 
+        // The funding sender becomes the treasury; the supplied public key MUST be
+        // that account's key (mirrors x402 token.rs:188).
         let treasury = self.env().caller();
+        if Address::from(treasury_public_key.clone()) != treasury {
+            self.env().revert(Error::NotAuthorizedSigner);
+        }
+
+        // Reconstruct the canonical preimage the treasury signed off-chain and
+        // verify the Casper-native signature against it (mirrors token.rs:205-208).
+        // Built and checked BEFORE any storage write, so a forged or mismatched
+        // authorization never mutates state.
+        let preimage = self.mandate_message(
+            agent,
+            treasury,
+            &sell_asset,
+            &buy_asset,
+            total_sell,
+            end_time_ms,
+            max_slippage_bps,
+            price_floor,
+            price_ceiling,
+            &venues,
+            &venue_addresses,
+            &mandate_nonce,
+        );
+        if !self
+            .env()
+            .verify_signature(&preimage, &casper_signature, &treasury_public_key)
+        {
+            self.env().revert(Error::BadSignature);
+        }
+        // blake2b hash of the verified preimage, for the audit event.
+        let preimage_hash = Bytes::from(self.env().hash(preimage.as_slice()).to_vec());
+
         self.treasury.set(treasury);
         self.agent.set(agent);
+        self.treasury_public_key.set(treasury_public_key);
         self.mandate_digest.set(mandate_digest.clone());
         self.signature.set(signature.clone());
+        self.casper_signature.set(casper_signature);
+        self.mandate_nonce.set(mandate_nonce.clone());
         self.sell_asset.set(sell_asset.clone());
         self.buy_asset.set(buy_asset.clone());
         self.total_sell.set(total_sell);
@@ -247,6 +367,8 @@ impl ExecutionVault {
             self.venue_allowlist.set(venue, true);
             self.venue_addr.set(venue, *addr);
         }
+        self.venue_ids.set(venues);
+        self.venue_addr_list.set(venue_addresses);
         self.sold_so_far.set(U512::zero());
         self.bought_so_far.set(U512::zero());
         self.slice_count.set(0);
@@ -262,6 +384,11 @@ impl ExecutionVault {
             total_sell,
             end_time_ms,
             max_slippage_bps,
+        });
+        self.env().emit_event(MandateVerified {
+            treasury,
+            mandate_nonce,
+            preimage_hash,
         });
     }
 
@@ -318,22 +445,22 @@ impl ExecutionVault {
         if min_out > quoted_out {
             self.env().revert(Error::MinOutAboveQuote);
         }
-        // 3. sold_so_far + sell_amount <= total_sell
-        let new_sold = self.sold_so_far.get_or_default() + sell_amount;
+        // 3. sold_so_far + sell_amount <= total_sell (checked arithmetic).
+        let new_sold = self.checked_add(self.sold_so_far.get_or_default(), sell_amount);
         if new_sold > self.total_sell.get_or_default() {
             self.env().revert(Error::SpendCapExceeded);
         }
         // 4. effective slippage (quote vs min_out) <= max_slippage_bps
         //    (quoted_out - min_out) * BPS_DENOMINATOR <= max_slippage_bps * quoted_out
         let slip_bps = self.max_slippage_bps.get_or_default() as u64;
-        let lhs = (quoted_out - min_out) * U512::from(BPS_DENOMINATOR);
-        let rhs = quoted_out * U512::from(slip_bps);
+        let lhs = self.checked_mul(quoted_out - min_out, U512::from(BPS_DENOMINATOR));
+        let rhs = self.checked_mul(quoted_out, U512::from(slip_bps));
         if lhs > rhs {
             self.env().revert(Error::SlippageTooHigh);
         }
         // 5. quoted price within [price_floor, price_ceiling] (if set)
         //    price = quoted_out * PRICE_SCALE / sell_amount  (buy units per sell unit)
-        let price = quoted_out * U512::from(PRICE_SCALE) / sell_amount;
+        let price = self.checked_mul(quoted_out, U512::from(PRICE_SCALE)) / sell_amount;
         let floor = self.price_floor.get_or_default();
         let ceiling = self.price_ceiling.get_or_default();
         if !floor.is_zero() && price < floor {
@@ -352,9 +479,10 @@ impl ExecutionVault {
             None => self.env().revert(Error::VenueNotAllowed),
         };
 
-        // All guardrails passed — release the sell asset to the venue and record.
+        // All guardrails passed. Checks-effects-interactions: record the slice
+        // BEFORE releasing funds so the invariant audit is obvious and a future
+        // re-entrant venue can never observe stale state.
         let slice_id = self.slice_count.get_or_default();
-        self.env().transfer_tokens(&venue_address, &sell_amount);
         self.sold_so_far.set(new_sold);
         self.slice_count.set(slice_id + 1);
         self.slice_min_out.set(&slice_id, min_out);
@@ -368,6 +496,8 @@ impl ExecutionVault {
             venue,
             sold_so_far: new_sold,
         });
+
+        self.env().transfer_tokens(&venue_address, &sell_amount);
         slice_id
     }
 
@@ -387,7 +517,7 @@ impl ExecutionVault {
         if bought_amount < min_out {
             self.env().revert(Error::SlippageTooHigh);
         }
-        let bought = self.bought_so_far.get_or_default() + bought_amount;
+        let bought = self.checked_add(self.bought_so_far.get_or_default(), bought_amount);
         self.bought_so_far.set(bought);
         self.slice_filled.set(&slice_id, true);
         self.env().emit_event(FillRecorded {
@@ -427,12 +557,46 @@ impl ExecutionVault {
         self.env().emit_event(StatusChanged { paused: false });
     }
 
+    /// Emergency drain. **Treasury only**, and only while the vault is `Paused`.
+    ///
+    /// This is the incident kill-switch: when the circuit-breaker has paused the
+    /// vault, the treasury may sweep the entire remaining balance back to itself and
+    /// move the vault to the terminal `Halted` status, blocking any further
+    /// execution. Distinct from `settle` (open-callable, only after the deadline or
+    /// completion): `emergency_withdraw` lets the treasury recover funds the moment
+    /// something goes wrong, without waiting for the window to close. Funds always
+    /// return to the stored `treasury` — never to the agent, and never to a
+    /// caller-supplied address.
+    pub fn emergency_withdraw(&mut self) {
+        self.assert_treasury();
+        if self.read_status() != Status::Paused {
+            self.env().revert(Error::NotPaused);
+        }
+        let treasury = self.treasury.get_or_revert_with(Error::NotTreasury);
+        let remaining = self.env().self_balance();
+
+        // Effects before interaction: mark terminal first, then transfer.
+        self.status.set(Status::Halted);
+        let sold = self.sold_so_far.get_or_default();
+        self.env().emit_event(EmergencyWithdrawn {
+            by: treasury,
+            returned_to_treasury: remaining,
+            sold_so_far: sold,
+        });
+        if !remaining.is_zero() {
+            self.env().transfer_tokens(&treasury, &remaining);
+        }
+    }
+
     /// Settle the vault: return any remaining sell asset to the treasury and emit
     /// the final report. Callable by anyone once the order is complete (cap
     /// reached) or the window has closed. Distinguishes `Completed` vs `Expired`.
+    ///
+    /// Will not run once the vault is terminal (`Completed`/`Expired`/`Halted`); a
+    /// halted vault has already returned its funds via `emergency_withdraw`.
     pub fn settle(&mut self) {
         let status = self.read_status();
-        if status == Status::Completed || status == Status::Expired {
+        if status == Status::Completed || status == Status::Expired || status == Status::Halted {
             self.env().revert(Error::CannotSettleYet);
         }
         let sold = self.sold_so_far.get_or_default();
@@ -445,11 +609,12 @@ impl ExecutionVault {
 
         let remaining = self.env().self_balance();
         let treasury = self.treasury.get_or_revert_with(Error::NotTreasury);
-        if !remaining.is_zero() {
-            self.env().transfer_tokens(&treasury, &remaining);
-        }
-        self.status
-            .set(if completed { Status::Completed } else { Status::Expired });
+        // Effects before interaction.
+        self.status.set(if completed {
+            Status::Completed
+        } else {
+            Status::Expired
+        });
         self.env().emit_event(Settled {
             completed,
             sold_so_far: sold,
@@ -457,6 +622,9 @@ impl ExecutionVault {
             slice_count: self.slice_count.get_or_default(),
             returned_to_treasury: remaining,
         });
+        if !remaining.is_zero() {
+            self.env().transfer_tokens(&treasury, &remaining);
+        }
     }
 
     // ----- read-only views (used by the dashboard / scripts) -----
@@ -497,14 +665,121 @@ impl ExecutionVault {
     pub fn get_mandate_digest(&self) -> Bytes {
         self.mandate_digest.get_or_default()
     }
+    pub fn get_mandate_nonce(&self) -> Bytes {
+        self.mandate_nonce.get_or_default()
+    }
     pub fn is_venue_allowed(&self, venue: String) -> bool {
         self.venue_allowlist.get_or_default(&venue)
     }
 
+    /// Public view that re-runs the stored-limits → preimage → `verify_signature`
+    /// check so anyone can independently confirm the on-chain limits match the
+    /// treasury's Casper signature without trusting `init`-time emission. Returns
+    /// `true` only if `treasury_public_key` hashes to the stored treasury AND the
+    /// `signature` verifies against the canonical preimage of the stored limits.
+    pub fn verify_mandate(&self, treasury_public_key: PublicKey, signature: Bytes) -> bool {
+        let treasury = match self.treasury.get() {
+            Some(t) => t,
+            None => return false,
+        };
+        if Address::from(treasury_public_key.clone()) != treasury {
+            return false;
+        }
+        let agent = match self.agent.get() {
+            Some(a) => a,
+            None => return false,
+        };
+        let preimage = self.mandate_message(
+            agent,
+            treasury,
+            &self.sell_asset.get_or_default(),
+            &self.buy_asset.get_or_default(),
+            self.total_sell.get_or_default(),
+            self.end_time_ms.get_or_default(),
+            self.max_slippage_bps.get_or_default(),
+            self.price_floor.get_or_default(),
+            self.price_ceiling.get_or_default(),
+            &self.venue_ids.get_or_default(),
+            &self.venue_addr_list.get_or_default(),
+            &self.mandate_nonce.get_or_default(),
+        );
+        self.env()
+            .verify_signature(&preimage, &signature, &treasury_public_key)
+    }
+
     // ----- internal helpers -----
+
+    /// The canonical Casper-native mandate preimage that the treasury signs and the
+    /// contract verifies. Mirrors the x402-token `authorization_message` discipline
+    /// (token.rs:221-247): a domain tag plus every enforced mandate field in Casper
+    /// `ToBytes` encoding. Cross-vault replay is prevented by the unique `nonce`
+    /// (the vault address is unknowable at signing time — see the module docs).
+    ///
+    /// **Field order is frozen** and MUST be reproduced byte-for-byte off-chain
+    /// (see `mandate/src/casperAuth.ts`):
+    ///   domain_tag ‖ agent ‖ treasury ‖ sell_asset ‖ buy_asset ‖ total_sell ‖
+    ///   end_time_ms ‖ max_slippage_bps ‖ price_floor ‖ price_ceiling ‖ venues ‖
+    ///   venue_addresses ‖ nonce
+    #[allow(clippy::too_many_arguments)]
+    fn mandate_message(
+        &self,
+        agent: Address,
+        treasury: Address,
+        sell_asset: &str,
+        buy_asset: &str,
+        total_sell: U512,
+        end_time_ms: u64,
+        max_slippage_bps: u32,
+        price_floor: U512,
+        price_ceiling: U512,
+        venues: &[String],
+        venue_addresses: &[Address],
+        nonce: &Bytes,
+    ) -> Bytes {
+        let mut buf: Vec<u8> = Vec::new();
+        // Domain tag is a fixed prefix (not length-prefixed) — unambiguous because
+        // the next field (`agent` Address) is itself self-describing in ToBytes.
+        buf.extend_from_slice(MANDATE_DOMAIN_TAG);
+
+        let parts: Vec<Result<Vec<u8>, _>> = vec![
+            agent.to_bytes(),
+            treasury.to_bytes(),
+            sell_asset.to_string().to_bytes(),
+            buy_asset.to_string().to_bytes(),
+            total_sell.to_bytes(),
+            end_time_ms.to_bytes(),
+            max_slippage_bps.to_bytes(),
+            price_floor.to_bytes(),
+            price_ceiling.to_bytes(),
+            venues.to_vec().to_bytes(),
+            venue_addresses.to_vec().to_bytes(),
+            nonce.to_bytes(),
+        ];
+        for part in parts {
+            match part {
+                Ok(bytes) => buf.extend_from_slice(&bytes),
+                Err(_) => self.env().revert(Error::SerializationError),
+            }
+        }
+        Bytes::from(buf)
+    }
 
     fn read_status(&self) -> Status {
         self.status.get_or_revert_with(Error::NotFunded)
+    }
+
+    fn checked_add(&self, a: U512, b: U512) -> U512 {
+        match a.checked_add(b) {
+            Some(v) => v,
+            None => self.env().revert(Error::Overflow),
+        }
+    }
+
+    fn checked_mul(&self, a: U512, b: U512) -> U512 {
+        match a.checked_mul(b) {
+            Some(v) => v,
+            None => self.env().revert(Error::Overflow),
+        }
     }
 
     fn assert_treasury(&self) {
@@ -550,30 +825,140 @@ mod tests {
         Bytes::from(vec![7u8; 32])
     }
 
+    fn nonce32() -> Bytes {
+        Bytes::from(vec![5u8; 32])
+    }
+
+    fn venues() -> Vec<String> {
+        vec!["cspr.trade".to_string()]
+    }
+
+    /// Reconstruct the exact canonical preimage the contract signs over, off-chain.
+    /// Byte-for-byte identical to [`ExecutionVault::mandate_message`].
+    #[allow(clippy::too_many_arguments)]
+    fn mandate_message_offchain(
+        agent: Address,
+        treasury: Address,
+        sell_asset: &str,
+        buy_asset: &str,
+        total_sell: U512,
+        end_time_ms: u64,
+        max_slippage_bps: u32,
+        price_floor: U512,
+        price_ceiling: U512,
+        venues: &[String],
+        venue_addresses: &[Address],
+        nonce: &Bytes,
+    ) -> Bytes {
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(MANDATE_DOMAIN_TAG);
+        buf.extend_from_slice(&agent.to_bytes().unwrap());
+        buf.extend_from_slice(&treasury.to_bytes().unwrap());
+        buf.extend_from_slice(&sell_asset.to_string().to_bytes().unwrap());
+        buf.extend_from_slice(&buy_asset.to_string().to_bytes().unwrap());
+        buf.extend_from_slice(&total_sell.to_bytes().unwrap());
+        buf.extend_from_slice(&end_time_ms.to_bytes().unwrap());
+        buf.extend_from_slice(&max_slippage_bps.to_bytes().unwrap());
+        buf.extend_from_slice(&price_floor.to_bytes().unwrap());
+        buf.extend_from_slice(&price_ceiling.to_bytes().unwrap());
+        buf.extend_from_slice(&venues.to_vec().to_bytes().unwrap());
+        buf.extend_from_slice(&venue_addresses.to_vec().to_bytes().unwrap());
+        buf.extend_from_slice(&nonce.to_bytes().unwrap());
+        Bytes::from(buf)
+    }
+
+    /// All-purpose deploy helper. The preimage is address-independent (bound by the
+    /// nonce, not `self_address`), so the treasury can sign it before the vault
+    /// exists — exactly the production flow. Parameters let the adversarial tests
+    /// deliberately mis-sign or tamper the installed limits.
+    struct DeployArgs {
+        price_floor: U512,
+        price_ceiling: U512,
+        /// Account whose key signs the canonical preimage.
+        signer: Address,
+        /// Account whose public key is supplied to `init`.
+        supplied_pk_account: Address,
+        /// total_sell value baked into the SIGNED preimage.
+        signed_total: U512,
+        /// total_sell value actually INSTALLED via init (differs to simulate tamper).
+        install_total: U512,
+        /// If set, an explicit raw signature to use instead of signing the preimage
+        /// (for the forged-bytes case).
+        override_signature: Option<Bytes>,
+    }
+
+    fn try_deploy(env: &HostEnv, args: DeployArgs) -> Result<ExecutionVaultHostRef, OdraError> {
+        let treasury = env.get_account(0);
+        let agent = env.get_account(1);
+        let venue_addr = env.get_account(2);
+        env.set_caller(treasury);
+
+        let preimage = mandate_message_offchain(
+            agent,
+            treasury,
+            "CSPR",
+            "USDC",
+            args.signed_total,
+            END_TIME_MS,
+            SLIPPAGE_BPS,
+            args.price_floor,
+            args.price_ceiling,
+            &venues(),
+            &[venue_addr],
+            &nonce32(),
+        );
+        let casper_signature = args
+            .override_signature
+            .unwrap_or_else(|| env.sign_message(&preimage, &args.signer));
+        let supplied_pk = env.public_key(&args.supplied_pk_account);
+
+        ExecutionVault::try_deploy(
+            env,
+            ExecutionVaultInitArgs {
+                agent,
+                mandate_digest: digest32(),
+                signature: Bytes::from(vec![1u8; 65]),
+                treasury_public_key: supplied_pk,
+                casper_signature,
+                mandate_nonce: nonce32(),
+                sell_asset: "CSPR".to_string(),
+                buy_asset: "USDC".to_string(),
+                total_sell: args.install_total,
+                end_time_ms: END_TIME_MS,
+                max_slippage_bps: SLIPPAGE_BPS,
+                price_floor: args.price_floor,
+                price_ceiling: args.price_ceiling,
+                venues: venues(),
+                venue_addresses: vec![venue_addr],
+            },
+        )
+    }
+
     fn deploy_with(price_floor: U512, price_ceiling: U512) -> Fixture {
         let env = odra_test::env();
         let treasury = env.get_account(0);
         let agent = env.get_account(1);
         let venue_addr = env.get_account(2);
-        env.set_caller(treasury);
-        let contract = ExecutionVault::deploy(
+        let contract = try_deploy(
             &env,
-            ExecutionVaultInitArgs {
-                agent,
-                mandate_digest: digest32(),
-                signature: Bytes::from(vec![1u8; 65]),
-                sell_asset: "CSPR".to_string(),
-                buy_asset: "USDC".to_string(),
-                total_sell: U512::from(TOTAL_SELL),
-                end_time_ms: END_TIME_MS,
-                max_slippage_bps: SLIPPAGE_BPS,
+            DeployArgs {
                 price_floor,
                 price_ceiling,
-                venues: vec!["cspr.trade".to_string()],
-                venue_addresses: vec![venue_addr],
+                signer: treasury,
+                supplied_pk_account: treasury,
+                signed_total: U512::from(TOTAL_SELL),
+                install_total: U512::from(TOTAL_SELL),
+                override_signature: None,
             },
-        );
-        Fixture { env, contract, treasury, agent, venue_addr }
+        )
+        .expect("happy-path deploy must verify");
+        Fixture {
+            env,
+            contract,
+            treasury,
+            agent,
+            venue_addr,
+        }
     }
 
     fn fund(fx: &mut Fixture) {
@@ -591,6 +976,10 @@ mod tests {
             "cspr.trade".to_string(),
         )
     }
+
+    // ---------------------------------------------------------------------------
+    // Existing behavioural coverage (preserved)
+    // ---------------------------------------------------------------------------
 
     #[test]
     fn happy_path_executes_records_and_settles() {
@@ -710,10 +1099,7 @@ mod tests {
     #[test]
     fn rejects_price_outside_band() {
         // Band [1.5, 2.5]; a quote priced at 3.0 must revert.
-        let mut fx = deploy_with(
-            U512::from(1_500_000_000u64),
-            U512::from(2_500_000_000u64),
-        );
+        let mut fx = deploy_with(U512::from(1_500_000_000u64), U512::from(2_500_000_000u64));
         fund(&mut fx);
         fx.env.set_caller(fx.agent);
         let err = fx
@@ -747,10 +1133,14 @@ mod tests {
         // be re-invoked after install, so a second attempt must error.
         let mut fx = deploy_with(U512::zero(), U512::zero());
         fx.env.set_caller(fx.treasury);
+        let pk = fx.env.public_key(&fx.treasury);
         let result = fx.contract.try_init(
             fx.agent,
             digest32(),
             Bytes::from(vec![1u8; 65]),
+            pk,
+            Bytes::from(vec![1u8; 65]),
+            nonce32(),
             "CSPR".to_string(),
             "USDC".to_string(),
             U512::from(TOTAL_SELL),
@@ -758,7 +1148,7 @@ mod tests {
             SLIPPAGE_BPS,
             U512::zero(),
             U512::zero(),
-            vec!["cspr.trade".to_string()],
+            venues(),
             vec![fx.venue_addr],
         );
         assert!(result.is_err());
@@ -791,5 +1181,291 @@ mod tests {
         // Remaining 900_000 returned to treasury.
         let treasury_after = fx.env.balance_of(&fx.treasury);
         assert!(treasury_after > treasury_before);
+    }
+
+    // ---------------------------------------------------------------------------
+    // (a) On-chain mandate signature verification — adversarial matrix
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn happy_path_signature_verifies_at_init() {
+        // The deploy helper signs the canonical preimage with the treasury key and
+        // supplies the treasury public key. If `init`'s on-chain verification did
+        // not pass, deploy would revert and `deploy_with` would panic.
+        let fx = deploy_with(U512::zero(), U512::zero());
+        assert_eq!(fx.contract.get_status(), Status::Funded);
+        // The stored nonce is the one bound into the verified preimage.
+        assert_eq!(fx.contract.get_mandate_nonce(), nonce32());
+    }
+
+    #[test]
+    fn verify_mandate_view_confirms_stored_limits() {
+        let fx = deploy_with(U512::zero(), U512::zero());
+        let pk = fx.env.public_key(&fx.treasury);
+        // The treasury re-signs the SAME canonical preimage over the stored limits;
+        // the view must accept it.
+        let preimage = mandate_message_offchain(
+            fx.agent,
+            fx.treasury,
+            "CSPR",
+            "USDC",
+            U512::from(TOTAL_SELL),
+            END_TIME_MS,
+            SLIPPAGE_BPS,
+            U512::zero(),
+            U512::zero(),
+            &venues(),
+            &[fx.venue_addr],
+            &nonce32(),
+        );
+        let sig = fx.env.sign_message(&preimage, &fx.treasury);
+        assert!(fx.contract.verify_mandate(pk, sig));
+    }
+
+    #[test]
+    fn verify_mandate_view_rejects_wrong_key() {
+        // A public key that does not hash to the stored treasury must be rejected by
+        // the view even before signature verification.
+        let fx = deploy_with(U512::zero(), U512::zero());
+        let agent_pk = fx.env.public_key(&fx.agent);
+        let preimage = mandate_message_offchain(
+            fx.agent,
+            fx.treasury,
+            "CSPR",
+            "USDC",
+            U512::from(TOTAL_SELL),
+            END_TIME_MS,
+            SLIPPAGE_BPS,
+            U512::zero(),
+            U512::zero(),
+            &venues(),
+            &[fx.venue_addr],
+            &nonce32(),
+        );
+        // Even a well-formed signature over the right preimage fails: wrong key.
+        let sig = fx.env.sign_message(&preimage, &fx.agent);
+        assert!(!fx.contract.verify_mandate(agent_pk, sig));
+    }
+
+    #[test]
+    fn rejects_forged_signature_at_init() {
+        // A well-formed signature over a DIFFERENT message (the treasury signing
+        // unrelated bytes) does not verify against the mandate preimage → the
+        // constructor reverts with BadSignature. Using a real signature keeps the
+        // bytes deserializable so we exercise the verify path, not the decode path.
+        let env = odra_test::env();
+        let treasury = env.get_account(0);
+        let unrelated = Bytes::from(b"not-the-mandate".to_vec());
+        let forged = env.sign_message(&unrelated, &treasury);
+        let result = try_deploy(
+            &env,
+            DeployArgs {
+                price_floor: U512::zero(),
+                price_ceiling: U512::zero(),
+                signer: treasury,
+                supplied_pk_account: treasury,
+                signed_total: U512::from(TOTAL_SELL),
+                install_total: U512::from(TOTAL_SELL),
+                override_signature: Some(forged),
+            },
+        );
+        let err = result.map(|_| ()).unwrap_err();
+        assert_eq!(err, Error::BadSignature.into());
+    }
+
+    #[test]
+    fn rejects_wrong_signer_key_hash_mismatch() {
+        // The supplied public key belongs to the AGENT, not the treasury caller, so
+        // `Address::from(pk) != caller` and init reverts NotAuthorizedSigner — even
+        // though the signature is itself well-formed.
+        let env = odra_test::env();
+        let agent = env.get_account(1);
+        let result = try_deploy(
+            &env,
+            DeployArgs {
+                price_floor: U512::zero(),
+                price_ceiling: U512::zero(),
+                signer: agent,              // signs with the agent key
+                supplied_pk_account: agent, // supplies the agent public key
+                signed_total: U512::from(TOTAL_SELL),
+                install_total: U512::from(TOTAL_SELL),
+                override_signature: None,
+            },
+        );
+        let err = result.map(|_| ()).unwrap_err();
+        assert_eq!(err, Error::NotAuthorizedSigner.into());
+    }
+
+    #[test]
+    fn rejects_wrong_signer_signed_by_attacker() {
+        // The attacker signs the preimage with their OWN key but the treasury public
+        // key is supplied (so the key-hash check passes) → verify_signature fails
+        // because the signature was not produced by the treasury key.
+        let env = odra_test::env();
+        let attacker = env.get_account(3);
+        let result = try_deploy(
+            &env,
+            DeployArgs {
+                price_floor: U512::zero(),
+                price_ceiling: U512::zero(),
+                signer: attacker, // signs with an attacker key
+                supplied_pk_account: env.get_account(0), // supplies treasury pk
+                signed_total: U512::from(TOTAL_SELL),
+                install_total: U512::from(TOTAL_SELL),
+                override_signature: None,
+            },
+        );
+        let err = result.map(|_| ()).unwrap_err();
+        assert_eq!(err, Error::BadSignature.into());
+    }
+
+    #[test]
+    fn rejects_tampered_limits_signature_mismatch() {
+        // The treasury signed a preimage with total_sell = TOTAL_SELL, but init is
+        // invoked with a DIFFERENT total_sell. The reconstructed preimage no longer
+        // matches what was signed → BadSignature. This is the core property: the
+        // installed limits are provably the ones the treasury signed.
+        let env = odra_test::env();
+        let treasury = env.get_account(0);
+        let result = try_deploy(
+            &env,
+            DeployArgs {
+                price_floor: U512::zero(),
+                price_ceiling: U512::zero(),
+                signer: treasury,
+                supplied_pk_account: treasury,
+                signed_total: U512::from(TOTAL_SELL), // signed value
+                install_total: U512::from(TOTAL_SELL * 2), // tampered installed value
+                override_signature: None,
+            },
+        );
+        let err = result.map(|_| ()).unwrap_err();
+        assert_eq!(err, Error::BadSignature.into());
+    }
+
+    #[test]
+    fn rejects_replayed_signature_under_different_limits() {
+        // Replay: take a perfectly valid signature for one mandate and try to reuse
+        // it for a vault with different price-band limits (a different preimage).
+        // The same signature can no longer verify → BadSignature, so a captured
+        // authorization cannot be replayed onto a vault it was not signed for.
+        let env = odra_test::env();
+        let treasury = env.get_account(0);
+        let venue_addr = env.get_account(2);
+        // Sign the ORIGINAL preimage (no band).
+        let original = mandate_message_offchain(
+            env.get_account(1),
+            treasury,
+            "CSPR",
+            "USDC",
+            U512::from(TOTAL_SELL),
+            END_TIME_MS,
+            SLIPPAGE_BPS,
+            U512::zero(),
+            U512::zero(),
+            &venues(),
+            &[venue_addr],
+            &nonce32(),
+        );
+        let captured_sig = env.sign_message(&original, &treasury);
+        // Replay it onto a vault that installs a non-zero price band.
+        let result = try_deploy(
+            &env,
+            DeployArgs {
+                price_floor: U512::from(1_500_000_000u64),
+                price_ceiling: U512::from(2_500_000_000u64),
+                signer: treasury,
+                supplied_pk_account: treasury,
+                signed_total: U512::from(TOTAL_SELL),
+                install_total: U512::from(TOTAL_SELL),
+                override_signature: Some(captured_sig),
+            },
+        );
+        let err = result.map(|_| ()).unwrap_err();
+        assert_eq!(err, Error::BadSignature.into());
+    }
+
+    // ---------------------------------------------------------------------------
+    // (b) emergency_withdraw — treasury-only, requires Paused
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn emergency_withdraw_drains_to_treasury_when_paused() {
+        let mut fx = deploy_with(U512::zero(), U512::zero());
+        fund(&mut fx);
+        ok_slice(&mut fx); // releases 100_000, leaves 900_000 in the vault
+
+        // Treasury pauses, then drains.
+        fx.env.set_caller(fx.treasury);
+        fx.contract.pause();
+        assert_eq!(fx.contract.get_status(), Status::Paused);
+
+        let before = fx.env.balance_of(&fx.treasury);
+        fx.env.set_caller(fx.treasury);
+        fx.contract.emergency_withdraw();
+        assert_eq!(fx.contract.get_status(), Status::Halted);
+        let after = fx.env.balance_of(&fx.treasury);
+        assert!(after > before, "remaining balance must return to treasury");
+    }
+
+    #[test]
+    fn emergency_withdraw_rejects_non_treasury() {
+        let mut fx = deploy_with(U512::zero(), U512::zero());
+        fund(&mut fx);
+        fx.env.set_caller(fx.treasury);
+        fx.contract.pause();
+        // Agent attempts the drain — must be rejected.
+        fx.env.set_caller(fx.agent);
+        let err = fx.contract.try_emergency_withdraw().unwrap_err();
+        assert_eq!(err, Error::NotTreasury.into());
+    }
+
+    #[test]
+    fn emergency_withdraw_requires_paused() {
+        let mut fx = deploy_with(U512::zero(), U512::zero());
+        fund(&mut fx); // Active, not Paused
+        fx.env.set_caller(fx.treasury);
+        let err = fx.contract.try_emergency_withdraw().unwrap_err();
+        assert_eq!(err, Error::NotPaused.into());
+    }
+
+    #[test]
+    fn settle_blocked_after_emergency_withdraw() {
+        // Once halted, settle must not move funds again (terminal state).
+        let mut fx = deploy_with(U512::zero(), U512::zero());
+        fund(&mut fx);
+        fx.env.set_caller(fx.treasury);
+        fx.contract.pause();
+        fx.env.set_caller(fx.treasury);
+        fx.contract.emergency_withdraw();
+        assert_eq!(fx.contract.get_status(), Status::Halted);
+
+        fx.env.advance_block_time(END_TIME_MS + 1);
+        let err = fx.contract.try_settle().unwrap_err();
+        assert_eq!(err, Error::CannotSettleYet.into());
+    }
+
+    #[test]
+    fn execute_slice_blocked_while_halted() {
+        // After an emergency drain the agent cannot resume execution: status is
+        // Halted (not Active), so execute_slice reverts NotActive.
+        let mut fx = deploy_with(U512::zero(), U512::zero());
+        fund(&mut fx);
+        fx.env.set_caller(fx.treasury);
+        fx.contract.pause();
+        fx.env.set_caller(fx.treasury);
+        fx.contract.emergency_withdraw();
+
+        fx.env.set_caller(fx.agent);
+        let err = fx
+            .contract
+            .try_execute_slice(
+                U512::from(100_000u64),
+                U512::from(200_000u64),
+                U512::from(198_000u64),
+                "cspr.trade".to_string(),
+            )
+            .unwrap_err();
+        assert_eq!(err, Error::NotActive.into());
     }
 }
