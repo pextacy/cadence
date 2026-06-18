@@ -34,7 +34,7 @@ export function mapStreamMessage(msg: unknown): VaultEvent | null {
 
   switch (name) {
     case "MandateInitialised":
-      return { kind: "MandateInitialised", treasury: str("treasury"), agent: str("agent"), totalSell: str("total_sell"), endTimeMs: num("end_time_ms"), maxSlippageBps: num("max_slippage_bps") };
+      return { kind: "MandateInitialised", treasury: str("treasury"), agent: str("agent"), sellAsset: str("sell_asset"), buyAsset: str("buy_asset"), totalSell: str("total_sell"), endTimeMs: num("end_time_ms"), maxSlippageBps: num("max_slippage_bps") };
     case "VaultFunded":
       return { kind: "VaultFunded", amount: str("amount"), balance: str("balance") };
     case "SliceExecuted":

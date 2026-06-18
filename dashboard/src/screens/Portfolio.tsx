@@ -94,6 +94,7 @@ export function Portfolio(): JSX.Element {
           <thead>
             <tr>
               <th>Vault</th>
+              <th>Pair</th>
               <th>Status</th>
               <th>Remaining</th>
               <th>Sold</th>
@@ -105,14 +106,19 @@ export function Portfolio(): JSX.Element {
           <tbody>
             {vaults.map((v) => {
               const m = deriveMetrics(v.state, nowMs, config.naiveBaselinePrice);
+              // Prefer the vault's own pair (from its MandateInitialised event);
+              // fall back to the configured defaults when not yet observed.
+              const vSell = v.state.sellAsset ?? sells;
+              const vBuy = v.state.buyAsset ?? buys;
               return (
                 <tr key={v.id}>
                   <td className="mono">{shortHash(v.id)}</td>
+                  <td>{v.state.sellAsset ? `${vSell}/${vBuy}` : "—"}</td>
                   <td>
                     <StatusBadge status={v.state.status} />
                   </td>
-                  <td className="num">{formatAmount(m.remaining, sells)}</td>
-                  <td className="num">{formatAmount(v.state.soldSoFar, sells)}</td>
+                  <td className="num">{formatAmount(m.remaining, vSell)}</td>
+                  <td className="num">{formatAmount(v.state.soldSoFar, vSell)}</td>
                   <td className="num">{m.averagePrice !== null ? formatPrice(m.averagePrice) : "—"}</td>
                   <td className="num">{m.timeLeftMs !== null ? formatDuration(m.timeLeftMs) : "—"}</td>
                   <td className="num">{v.state.slices.length}</td>

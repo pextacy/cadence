@@ -39,6 +39,8 @@ export async function deployVault(): Promise<DeployResult> {
     agent: CLValue.newCLKey(Key.newKey(agentAccountHash)),
     mandate_digest: clBytesList(hexToBytes(signed.digest)),
     signature: clBytesList(hexToBytes(signed.signature)),
+    sell_asset: CLValue.newCLString(m.sellAsset),
+    buy_asset: CLValue.newCLString(m.buyAsset),
     total_sell: CLValue.newCLUInt512(m.totalSellAmount),
     end_time_ms: CLValue.newCLUint64(m.endTime * 1000),
     max_slippage_bps: CLValue.newCLUInt32(m.maxSlippageBps),

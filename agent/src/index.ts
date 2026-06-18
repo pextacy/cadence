@@ -7,6 +7,8 @@ export { Portfolio } from "./portfolio/manager.js";
 export { selectNext, isActionable } from "./portfolio/scheduler.js";
 export { parsePortfolioManifest, loadPortfolioManifest } from "./portfolio/manifest.js";
 export type { MandateTrack } from "./portfolio/types.js";
+export { selectBestQuote } from "./routing/best-execution.js";
+export { allowlistedQuotes, dedupeQuotes } from "./routing/venues.js";
 export * from "./types.js";
 export { loadSignedMandate, toRuntimeMandate, type SignedMandateFile } from "./mandate.js";
 export { loadConfig, type Config } from "./config.js";

@@ -33,6 +33,8 @@ export function reduceEvent(state: DashboardState, ev: VaultEvent): DashboardSta
         status: "Funded",
         treasury: ev.treasury,
         agent: ev.agent,
+        ...(ev.sellAsset ? { sellAsset: ev.sellAsset } : {}),
+        ...(ev.buyAsset ? { buyAsset: ev.buyAsset } : {}),
         totalSell: BigInt(ev.totalSell),
         endTimeMs: ev.endTimeMs,
         maxSlippageBps: ev.maxSlippageBps,

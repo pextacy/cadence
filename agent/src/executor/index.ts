@@ -1,6 +1,7 @@
 import type { CsprTradeClient } from "../clients/csprTrade.js";
 import type { VaultClient } from "../clients/vault.js";
 import type { Quote, RuntimeMandate, SliceProposal, VaultState } from "../types.js";
+import { selectBestQuote } from "../routing/best-execution.js";
 import { validateSlice, type GuardrailCode } from "./guardrails.js";
 
 export type ExecOutcome =
@@ -70,15 +71,26 @@ export class Executor {
     proposal: SliceProposal,
     nowMs: number,
   ): Promise<ExecOutcome> {
+    // Best execution: quote every allowlisted venue and take the best output.
+    // The chosen venue is re-validated against the allowlist by both the guardrail
+    // pre-check below and the vault on-chain.
     let quote: Quote;
     try {
-      quote = await withRetry(() =>
-        this.deps.market.getQuote({
-          tokenIn: this.deps.sellToken,
-          tokenOut: this.deps.buyToken,
-          amount: proposal.sellAmount,
-        }),
+      const quotes = await withRetry(() =>
+        this.deps.market.getQuotes(
+          {
+            tokenIn: this.deps.sellToken,
+            tokenOut: this.deps.buyToken,
+            amount: proposal.sellAmount,
+          },
+          mandate.venueAllowlist,
+        ),
       );
+      const best = selectBestQuote(quotes, mandate.venueAllowlist);
+      if (best === null) {
+        return { status: "skipped", code: "VenueNotAllowed", message: "no allowlisted venue produced a usable quote" };
+      }
+      quote = best;
     } catch (err) {
       return { status: "paused", reason: `quote fetch failed: ${describe(err)}` };
     }
