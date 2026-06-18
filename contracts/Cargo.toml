@@ -1,6 +1,19 @@
 [workspace]
 resolver = "2"
-members = ["vault", "cep18", "x402-token", "access-control", "dex-adapter", "price-oracle"]
+members = [
+    "common",
+    "vault",
+    "cep18",
+    "x402-token",
+    "access-control",
+    "dex-adapter",
+    "price-oracle",
+    "vault-factory",
+    "vault-registry",
+    "fee-module",
+    "treasury-multisig",
+    "guardian",
+]
 
 [workspace.package]
 edition = "2021"

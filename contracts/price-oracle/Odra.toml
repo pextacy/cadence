@@ -1,2 +1,5 @@
 [[contracts]]
-fqn = "oracle::SignedPriceOracle"
+fqn = "signed_oracle::SignedPriceOracle"
+
+[[contracts]]
+fqn = "aggregator::OracleAggregator"

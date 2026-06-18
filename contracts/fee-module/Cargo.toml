@@ -1,0 +1,28 @@
+[package]
+name = "cadence-fee-module"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+odra = { workspace = true }
+cadence-common = { path = "../common" }
+cadence_access_control = { path = "../access-control", default-features = false }
+
+[dev-dependencies]
+odra-test = { workspace = true }
+
+[build-dependencies]
+odra-build = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+odra-build = { workspace = true }
+
+[[bin]]
+name = "cadence_fee_module_build_contract"
+path = "bin/build_contract.rs"
+test = false
+
+[[bin]]
+name = "cadence_fee_module_build_schema"
+path = "bin/build_schema.rs"
+test = false

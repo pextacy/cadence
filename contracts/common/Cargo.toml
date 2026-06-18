@@ -1,0 +1,10 @@
+[package]
+name = "cadence-common"
+version.workspace = true
+edition.workspace = true
+
+# Pure, shared math library. NOT a deployable Odra contract — no Odra.toml, no
+# build.rs, no bin/. It depends on `odra` only for the `casper_types::U512`
+# integer type and the `no_std`-friendly prelude the contract crates already use.
+[dependencies]
+odra = { workspace = true }
