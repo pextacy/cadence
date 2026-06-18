@@ -3,6 +3,7 @@ import { validateSlice } from "./guardrails.js";
 import type { Quote, RuntimeMandate, SliceProposal, VaultState } from "../types.js";
 
 const NOW = 1_000_000;
+const VENUE_ADDR = "account-hash-" + "00".repeat(32);
 
 function mandate(over: Partial<RuntimeMandate> = {}): RuntimeMandate {
   return {
@@ -14,6 +15,7 @@ function mandate(over: Partial<RuntimeMandate> = {}): RuntimeMandate {
     priceFloor: 0n,
     priceCeiling: 0n,
     venueAllowlist: ["cspr.trade"],
+    venueAddresses: [VENUE_ADDR],
     strategy: "TWAP",
     ...over,
   };
@@ -28,7 +30,7 @@ function proposal(over: Partial<SliceProposal> = {}): SliceProposal {
 }
 
 function quote(over: Partial<Quote> = {}): Quote {
-  return { venue: "cspr.trade", venueAddress: "account-hash-" + "00".repeat(32), sellAmount: 100_000n, quotedOut: 200_000n, ...over };
+  return { venue: "cspr.trade", venueAddress: VENUE_ADDR, sellAmount: 100_000n, quotedOut: 200_000n, ...over };
 }
 
 describe("validateSlice", () => {
@@ -55,6 +57,17 @@ describe("validateSlice", () => {
 
   it("rejects an unallowlisted venue", () => {
     const r = validateSlice(mandate(), state(), proposal(), quote({ venue: "evil.dex" }), NOW);
+    expect(r).toMatchObject({ ok: false, code: "VenueNotAllowed" });
+  });
+
+  it("rejects a quote whose venue address is not the mandate-bound one", () => {
+    const r = validateSlice(
+      mandate(),
+      state(),
+      proposal(),
+      quote({ venueAddress: "account-hash-" + "99".repeat(32) }),
+      NOW,
+    );
     expect(r).toMatchObject({ ok: false, code: "VenueNotAllowed" });
   });
 

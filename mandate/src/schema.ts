@@ -62,6 +62,13 @@ export interface Mandate {
   priceCeiling: string;
   strategy: Strategy;
   venueAllowlist: string[];
+  /**
+   * On-chain destination address for each venue in `venueAllowlist`, index-aligned.
+   * The vault releases a slice's sell asset only to these addresses; the agent
+   * cannot supply or override them, so it can never redirect funds. Casper
+   * account/contract hashes (e.g. "account-hash-…" / "hash-…").
+   */
+  venueAddresses: string[];
   nonce: string;
 }
 
@@ -87,6 +94,7 @@ export const MANDATE_TYPES: TypeDefinitions = {
     { name: "priceCeiling", type: "uint256" },
     { name: "strategy", type: "string" },
     { name: "venues", type: "string" },
+    { name: "venueAddresses", type: "string" },
     { name: "nonce", type: "bytes32" },
   ],
 };
@@ -145,6 +153,7 @@ export function toTypedMessage(m: Mandate): Record<string, unknown> {
     priceCeiling: BigInt(m.priceCeiling),
     strategy: m.strategy,
     venues: canonicalVenues(m.venueAllowlist),
+    venueAddresses: canonicalVenues(m.venueAddresses),
     nonce: m.nonce,
   };
 }

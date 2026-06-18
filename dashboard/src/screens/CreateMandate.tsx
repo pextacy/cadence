@@ -27,6 +27,7 @@ interface Form {
   priceCeiling: string;
   strategy: "TWAP" | "VWAP" | "ADAPTIVE";
   venue: string;
+  venueAddresses: string;
   devKey: string;
 }
 
@@ -51,6 +52,7 @@ const DEFAULTS: Form = {
   priceCeiling: "",
   strategy: "TWAP",
   venue: "cspr.trade",
+  venueAddresses: "",
   devKey: "",
 };
 
@@ -164,6 +166,20 @@ export function CreateMandate({ config }: { config: DashboardConfig }): JSX.Elem
           <input id="venue" value={form.venue} onChange={(e) => set("venue", e.target.value)} />
           <div className="hint">Comma-separated. The vault rejects any swap to a venue not on this list.</div>
         </div>
+
+        <div className="field">
+          <label htmlFor="venueAddresses">Venue addresses</label>
+          <input
+            id="venueAddresses"
+            value={form.venueAddresses}
+            onChange={(e) => set("venueAddresses", e.target.value)}
+          />
+          <div className="hint">
+            Comma-separated, one Casper address per venue above. The vault releases each
+            slice only to these addresses — the agent cannot redirect funds elsewhere.
+          </div>
+          {errors.venue && <div className="error">{errors.venue}</div>}
+        </div>
       </div>
 
       <div className="card reveal">
@@ -208,7 +224,7 @@ export function CreateMandate({ config }: { config: DashboardConfig }): JSX.Elem
 
 interface BuildResult {
   mandate: Mandate | null;
-  errors: { totalSell?: string; window?: string; slippage?: string };
+  errors: { totalSell?: string; window?: string; slippage?: string; venue?: string };
 }
 
 function buildMandate(form: Form): BuildResult {
@@ -232,6 +248,14 @@ function buildMandate(form: Form): BuildResult {
     errors.slippage = "Slippage must be between 0 and 100%.";
   }
 
+  const venueAllowlist = form.venue.split(",").map((v) => v.trim()).filter(Boolean);
+  const venueAddresses = form.venueAddresses.split(",").map((v) => v.trim()).filter(Boolean);
+  if (venueAllowlist.length === 0) {
+    errors.venue = "Add at least one venue.";
+  } else if (venueAddresses.length !== venueAllowlist.length) {
+    errors.venue = `Provide one address per venue (${venueAllowlist.length} venue(s), ${venueAddresses.length} address(es)).`;
+  }
+
   if (Object.keys(errors).length > 0) return { mandate: null, errors };
 
   // Derive the treasury from the signing key when present so the preview and
@@ -250,7 +274,8 @@ function buildMandate(form: Form): BuildResult {
     priceFloor: toFixedPrice(form.priceFloor),
     priceCeiling: toFixedPrice(form.priceCeiling),
     strategy: form.strategy,
-    venueAllowlist: form.venue.split(",").map((v) => v.trim()).filter(Boolean),
+    venueAllowlist,
+    venueAddresses,
     nonce: randomNonce(),
   };
   return { mandate, errors };

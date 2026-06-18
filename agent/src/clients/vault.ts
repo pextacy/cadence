@@ -3,7 +3,7 @@ import type * as Casper from "casper-js-sdk";
 
 // casper-js-sdk is CommonJS; its API is on the default export. Destructure values
 // from default and take type-only names from the namespace import.
-const { Args, CLValue, ContractCallBuilder, HttpHandler, Key, KeyAlgorithm, PrivateKey, RpcClient } =
+const { Args, CLValue, ContractCallBuilder, HttpHandler, KeyAlgorithm, PrivateKey, RpcClient } =
   casper;
 
 /** Default gas payment (motes) for the agent's vault entrypoints. */
@@ -67,7 +67,6 @@ export class VaultClient {
     quotedOut: bigint;
     minOut: bigint;
     venue: string;
-    venueAddress: string;
   }): Casper.Transaction {
     return new ContractCallBuilder()
       .from(this.key.publicKey)
@@ -84,14 +83,14 @@ export class VaultClient {
     quotedOut: bigint;
     minOut: bigint;
     venue: string;
-    venueAddress: string;
   }): Casper.Args {
+    // No venue address is sent: the vault resolves the destination from the
+    // mandate-bound allowlist on-chain, so the agent cannot redirect funds.
     return Args.fromMap({
       sell_amount: CLValue.newCLUInt512(p.sellAmount.toString()),
       quoted_out: CLValue.newCLUInt512(p.quotedOut.toString()),
       min_out: CLValue.newCLUInt512(p.minOut.toString()),
       venue: CLValue.newCLString(p.venue),
-      venue_address: CLValue.newCLKey(Key.newKey(p.venueAddress)),
     });
   }
 
@@ -100,7 +99,6 @@ export class VaultClient {
     quotedOut: bigint;
     minOut: bigint;
     venue: string;
-    venueAddress: string;
   }): Promise<string> {
     return this.send("execute_slice", this.executeSliceArgs(p), GAS_EXECUTE_SLICE);
   }

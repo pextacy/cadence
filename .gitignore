@@ -4,8 +4,7 @@ node_modules/
 # Build output
 dist/
 **/dist/
-contracts/wasm/
-contracts/target/
+**/wasm/
 target/
 
 # Rust / Odra

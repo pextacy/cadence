@@ -18,9 +18,9 @@ const ConfigSchema = z.object({
   x402FacilitatorUrl: z.string().url().optional(),
   x402DepthResource: z.string().url().optional(),
   agentPrivateKeyHex: z.string().regex(/^(0x)?[0-9a-fA-F]{64}$/),
-  /** Casper account-hash that receives swap proceeds (the treasury). The agent is
-   *  never the recipient, so it custodies no funds. */
-  treasuryAccountHash: z.string().min(1),
+  /** Treasury's Casper account hash — the non-custodial destination for swap
+   * proceeds. Public information; the agent never holds the treasury key. */
+  treasuryAccountHash: z.string().regex(/^account-hash-[0-9a-fA-F]{64}$/),
   llmApiKey: z.string().min(1),
   llmModel: z.string().min(1),
   vaultContractHash: z.string().min(1),

@@ -96,7 +96,11 @@ Build contracts against the Odra framework — read `https://odra.dev/llms.txt` 
 6. venue ∈ `venue_allowlist`
 7. caller == `agent_identity`
 
-If any check fails the call reverts — this is the guardrail the agent cannot bypass.
+The sell asset is released **only** to the venue's mandate-bound address, stored at
+`init` and keyed by venue name. The caller does not supply the destination, so the
+agent cannot redirect funds to an address it controls even with an allowlisted
+venue name. If any check fails the call reverts — this is the guardrail the agent
+cannot bypass.
 
 ## 5. The agent service
 

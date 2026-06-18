@@ -65,7 +65,7 @@ When implementing against any of these, read the live docs/`llms.txt` first; do 
 ## 6. How to work in this repo
 
 ### Build / test
-- **Contracts** (`/contracts`): `cargo odra build` to compile the WASM, `cargo odra test` to run contract tests, and `npm run deploy:testnet` (in `/scripts`) to deploy the Execution Vault to Casper Testnet and print the contract hash.
+- **Contracts** (`/contracts`): `./build-wasm.sh` to compile + lower every contract to a deployable MVP wasm (see `contracts/README.md`), `cargo test` to run contract tests, and `npm run deploy:testnet` (in `/scripts`) to deploy the Execution Vault to Casper Testnet and print the contract hash.
 - **Agent** (`/agent`): `npm install`, then `npm run dev` to start the service and `npm test` for unit tests.
 - **Dashboard** (`/dashboard`): `npm install`, then `npm run dev`.
 - **End-to-end demo** (`/scripts`): `npm run demo` — signs a mandate, funds the vault, and runs the agent against the configured testnet pair end to end.

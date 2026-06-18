@@ -67,8 +67,20 @@ export function validateSlice(
   if (!withinBand(price, mandate.priceFloor, mandate.priceCeiling)) {
     return { ok: false, code: "PriceOutOfBand", message: "quoted price is outside the band" };
   }
-  if (!mandate.venueAllowlist.includes(quote.venue)) {
+  const venueIndex = mandate.venueAllowlist.indexOf(quote.venue);
+  if (venueIndex === -1) {
     return { ok: false, code: "VenueNotAllowed", message: `venue ${quote.venue} not allowlisted` };
+  }
+  // The vault releases funds to the mandate-bound address regardless of the quote.
+  // If the quote's pool address disagrees, the swap would target a different venue
+  // than the one funded — reject rather than submit a mismatched slice.
+  const boundAddress = mandate.venueAddresses[venueIndex];
+  if (boundAddress !== undefined && quote.venueAddress !== boundAddress) {
+    return {
+      ok: false,
+      code: "VenueNotAllowed",
+      message: `quote venue address ${quote.venueAddress} does not match mandate-bound ${boundAddress}`,
+    };
   }
   return { ok: true, minOut };
 }

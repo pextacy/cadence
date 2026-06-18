@@ -23,8 +23,8 @@ export interface ExecutorDeps {
   market: CsprTradeClient;
   sellToken: string;
   buyToken: string;
-  /** Recipient of swap proceeds — the treasury account hash. The agent is never
-   *  the recipient, so it custodies no funds. */
+  /** Recipient of swap proceeds — the treasury's Casper account (non-custodial;
+   * the agent never receives funds). */
   proceedsRecipient: string;
 }
 
@@ -112,7 +112,6 @@ export class Executor {
           quotedOut: quote.quotedOut,
           minOut,
           venue: quote.venue,
-          venueAddress: quote.venueAddress,
         }),
       );
     } catch (err) {

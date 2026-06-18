@@ -31,6 +31,7 @@ function baseMandate(): Omit<Mandate, "treasury"> {
     priceCeiling: "0",
     strategy: "TWAP",
     venueAllowlist: ["cspr.trade"],
+    venueAddresses: ["account-hash-" + "cd".repeat(32)],
     nonce: "0x" + "ab".repeat(32),
   };
 }

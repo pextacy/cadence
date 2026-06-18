@@ -140,6 +140,10 @@ pub enum Error {
     UnknownSlice = 15,
     /// Funding amount did not match the mandate total.
     FundingMismatch = 16,
+    /// The venue list and venue-address list had mismatched lengths at init.
+    VenueConfigMismatch = 17,
+    /// A fill was already recorded for this slice.
+    SliceAlreadyFilled = 18,
 }
 
 /// The Execution Vault.
@@ -173,6 +177,10 @@ pub struct ExecutionVault {
     price_floor: Var<U512>,   // 0 == unset
     price_ceiling: Var<U512>, // 0 == unset
     venue_allowlist: Mapping<String, bool>,
+    // The on-chain destination the sell asset is released to for each allowlisted
+    // venue. Set once at `init` from the signed mandate; the agent cannot supply or
+    // override it, so it can never redirect funds to an address it controls.
+    venue_addr: Mapping<String, Address>,
 
     // Progress
     sold_so_far: Var<U512>,
@@ -207,6 +215,7 @@ impl ExecutionVault {
         price_floor: U512,
         price_ceiling: U512,
         venues: Vec<String>,
+        venue_addresses: Vec<Address>,
     ) {
         // Odra constructors are one-shot at install time; the framework rejects any
         // attempt to re-invoke `init`, so no in-body re-entry guard is needed.
@@ -215,6 +224,11 @@ impl ExecutionVault {
         }
         if total_sell.is_zero() {
             self.env().revert(Error::ZeroAmount);
+        }
+        // Each allowlisted venue must carry exactly one destination address so the
+        // spend entrypoint can resolve where funds go without trusting the caller.
+        if venues.len() != venue_addresses.len() {
+            self.env().revert(Error::VenueConfigMismatch);
         }
 
         let treasury = self.env().caller();
@@ -229,8 +243,9 @@ impl ExecutionVault {
         self.max_slippage_bps.set(max_slippage_bps);
         self.price_floor.set(price_floor);
         self.price_ceiling.set(price_ceiling);
-        for venue in venues.iter() {
+        for (venue, addr) in venues.iter().zip(venue_addresses.iter()) {
             self.venue_allowlist.set(venue, true);
+            self.venue_addr.set(venue, *addr);
         }
         self.sold_so_far.set(U512::zero());
         self.bought_so_far.set(U512::zero());
@@ -277,15 +292,14 @@ impl ExecutionVault {
     /// - `sell_amount`  size of this child order in the sell asset
     /// - `quoted_out`   the venue quote's expected output for `sell_amount`
     /// - `min_out`      the agent's committed minimum acceptable output
-    /// - `venue`        venue identifier (must be on the allowlist)
-    /// - `venue_address`the on-chain address the sell asset is released to
+    /// - `venue`        venue identifier (must be on the allowlist); the on-chain
+    ///                  destination is resolved from the mandate, not the caller
     pub fn execute_slice(
         &mut self,
         sell_amount: U512,
         quoted_out: U512,
         min_out: U512,
         venue: String,
-        venue_address: Address,
     ) -> u32 {
         self.assert_agent();
 
@@ -328,10 +342,15 @@ impl ExecutionVault {
         if !ceiling.is_zero() && price > ceiling {
             self.env().revert(Error::PriceOutOfBand);
         }
-        // 6. venue ∈ allowlist
+        // 6. venue ∈ allowlist — and resolve its mandate-bound destination. The
+        //    caller never supplies the address, so it cannot redirect the funds.
         if !self.venue_allowlist.get_or_default(&venue) {
             self.env().revert(Error::VenueNotAllowed);
         }
+        let venue_address = match self.venue_addr.get(&venue) {
+            Some(addr) => addr,
+            None => self.env().revert(Error::VenueNotAllowed),
+        };
 
         // All guardrails passed — release the sell asset to the venue and record.
         let slice_id = self.slice_count.get_or_default();
@@ -359,6 +378,10 @@ impl ExecutionVault {
         self.assert_agent();
         if slice_id >= self.slice_count.get_or_default() {
             self.env().revert(Error::UnknownSlice);
+        }
+        // One fill per slice: a second call would double-count `bought_so_far`.
+        if self.slice_filled.get_or_default(&slice_id) {
+            self.env().revert(Error::SliceAlreadyFilled);
         }
         let min_out = self.slice_min_out.get_or_default(&slice_id);
         if bought_amount < min_out {
@@ -547,6 +570,7 @@ mod tests {
                 price_floor,
                 price_ceiling,
                 venues: vec!["cspr.trade".to_string()],
+                venue_addresses: vec![venue_addr],
             },
         );
         Fixture { env, contract, treasury, agent, venue_addr }
@@ -565,7 +589,6 @@ mod tests {
             U512::from(200_000u64),
             U512::from(198_000u64),
             "cspr.trade".to_string(),
-            fx.venue_addr,
         )
     }
 
@@ -609,7 +632,6 @@ mod tests {
                 U512::from(200_000u64),
                 U512::from(198_000u64),
                 "cspr.trade".to_string(),
-                fx.venue_addr,
             )
             .unwrap_err();
         assert_eq!(err, Error::NotAgent.into());
@@ -627,7 +649,6 @@ mod tests {
                 U512::from(2_000_002u64),
                 U512::from(1_980_001u64),
                 "cspr.trade".to_string(),
-                fx.venue_addr,
             )
             .unwrap_err();
         assert_eq!(err, Error::SpendCapExceeded.into());
@@ -646,7 +667,6 @@ mod tests {
                 U512::from(200_000u64),
                 U512::from(198_000u64),
                 "cspr.trade".to_string(),
-                fx.venue_addr,
             )
             .unwrap_err();
         assert_eq!(err, Error::DeadlinePassed.into());
@@ -665,7 +685,6 @@ mod tests {
                 U512::from(200_000u64),
                 U512::from(197_000u64),
                 "cspr.trade".to_string(),
-                fx.venue_addr,
             )
             .unwrap_err();
         assert_eq!(err, Error::SlippageTooHigh.into());
@@ -683,7 +702,6 @@ mod tests {
                 U512::from(200_000u64),
                 U512::from(198_000u64),
                 "evil.dex".to_string(),
-                fx.venue_addr,
             )
             .unwrap_err();
         assert_eq!(err, Error::VenueNotAllowed.into());
@@ -705,7 +723,6 @@ mod tests {
                 U512::from(300_000u64), // price 3.0
                 U512::from(300_000u64), // zero slippage so only price check fails
                 "cspr.trade".to_string(),
-                fx.venue_addr,
             )
             .unwrap_err();
         assert_eq!(err, Error::PriceOutOfBand.into());
@@ -742,8 +759,24 @@ mod tests {
             U512::zero(),
             U512::zero(),
             vec!["cspr.trade".to_string()],
+            vec![fx.venue_addr],
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_double_fill() {
+        let mut fx = deploy_with(U512::zero(), U512::zero());
+        fund(&mut fx);
+        ok_slice(&mut fx);
+        fx.env.set_caller(fx.agent);
+        fx.contract
+            .record_fill(0, U512::from(199_000u64), "deploy-hash-1".to_string());
+        let err = fx
+            .contract
+            .try_record_fill(0, U512::from(199_000u64), "deploy-hash-2".to_string())
+            .unwrap_err();
+        assert_eq!(err, Error::SliceAlreadyFilled.into());
     }
 
     #[test]

@@ -32,9 +32,12 @@ Treasurer ───────────────────────�
        Live Dashboard                                  CSPR.trade MCP
 ```
 
-- **`/contracts`** — the Execution Vault (Rust + Odra). Custodies the sell asset,
-  stores the mandate digest + decoded limits, and exposes a single constrained
-  `execute_slice` entrypoint that re-validates every guardrail on-chain.
+- **`/contracts`** — a Cargo workspace of Odra (Rust → Casper WASM) contracts, one
+  crate each: the **Execution Vault** (`vault/`, custodies the sell asset and
+  re-validates every guardrail in `execute_slice`), a **CEP-18 token** (`cep18/`,
+  the demo settlement stablecoin), and an **x402-payable token** (`x402-token/`,
+  CEP-18 plus a gasless `transfer_with_authorization`). See
+  [`contracts/README.md`](contracts/README.md).
 - **`/mandate`** — shared TypeScript package: mandate schema, EIP-712 typed-data
   hashing, signing and verification (`@casper-ecosystem/casper-eip-712`).
 - **`/agent`** — the agent service: an LLM **planner** (Claude) that proposes the
@@ -77,8 +80,9 @@ endpoint can still be overridden by its explicit variable. Defaults to testnet.
 Build everything and run the test suites:
 
 ```bash
-# Contracts — compiles the WASM and runs the guardrail tests
-cd contracts && cargo odra test && cargo odra build && cd ..
+# Contracts — runs every contract's tests (vault + CEP-18 + x402 token).
+# Build a deployable wasm per crate with `./build-wasm.sh` (see contracts/README.md).
+cd contracts && cargo test && cd ..
 
 # TypeScript — mandate, agent and dashboard unit tests + builds
 npm run build
@@ -112,14 +116,16 @@ saved versus a naive single sell, and an attempted out-of-bounds trade is visibl
 
 ## What is verified locally vs. on testnet
 
-- **Verified by `cargo odra test`** — all six guardrails revert as required
+- **Verified by `cargo test`** — the vault: all six guardrails revert as required
   (over-cap, past-deadline, over-slippage, wrong venue, wrong caller, price band),
   the happy path executes/records/settles, settlement returns remaining funds, and
-  `init` is one-shot. (10 tests.)
+  `init` is one-shot; the CEP-18 token: mint/transfer/approve/transfer_from; the
+  x402 token: a relayer-submitted signed authorization settles while tampered,
+  replayed, expired and wrong-signer authorizations revert. (21 tests.)
 - **Verified by `npm test`** — EIP-712 sign/verify and tamper-rejection (mandate),
   guardrail parity with the contract, slippage/price/min-out math, the planner
   output schema, the x402 payment-payload construction + signature round-trip, and
-  the dashboard event reducer + metrics. (43 tests across packages.)
+  the dashboard event reducer + metrics. (46 tests across packages.)
 - **Requires a configured testnet + keys** — deploying the vault, funding it, live
   swaps via CSPR.trade, x402 premium-data calls, and CSPR.cloud streaming. These
   run against the real endpoints; the only blanks are the `.env` values.

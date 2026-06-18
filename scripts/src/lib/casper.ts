@@ -5,7 +5,7 @@ import { networkPreset } from "@cadence/mandate";
 // casper-js-sdk ships as CommonJS; its full API is on the default export. Named
 // ESM imports are not detectable at runtime, so destructure values from default
 // and take type-only names from the namespace import (erased at compile time).
-const { CLValue, CLTypeUInt8, CLTypeString, HttpHandler, KeyAlgorithm, PrivateKey, RpcClient } =
+const { CLValue, CLTypeUInt8, CLTypeString, CLTypeKey, HttpHandler, Key, KeyAlgorithm, PrivateKey, RpcClient } =
   casper;
 
 /** Construct an RPC client for a node URL. */
@@ -44,6 +44,17 @@ export function clStringList(items: string[]): Casper.CLValue {
   return CLValue.newCLList(
     CLTypeString,
     items.map((s) => CLValue.newCLString(s)),
+  );
+}
+
+/**
+ * Encode a list of Casper keys (account-hash-… / hash-…) as a `List<Key>` CLValue
+ * — the representation Odra uses for a `Vec<Address>` entrypoint argument.
+ */
+export function clKeyList(items: string[]): Casper.CLValue {
+  return CLValue.newCLList(
+    CLTypeKey,
+    items.map((k) => CLValue.newCLKey(Key.newKey(k))),
   );
 }
 

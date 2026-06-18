@@ -6,6 +6,7 @@ import type { SignedMandateFile } from "@cadence/agent";
 const { Args, CLValue, Key, SessionBuilder } = casper;
 import {
   clBytesList,
+  clKeyList,
   clStringList,
   hexToBytes,
   loadSecp256k1,
@@ -26,7 +27,7 @@ export interface DeployResult {
 export async function deployVault(): Promise<DeployResult> {
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
-  const wasmPath = process.env.VAULT_WASM_PATH ?? "../contracts/wasm/ExecutionVault.wasm";
+  const wasmPath = process.env.VAULT_WASM_PATH ?? "../contracts/vault/wasm/ExecutionVault.wasm";
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
   const agentAccountHash = requireEnv("AGENT_ACCOUNT_HASH"); // "account-hash-…"
   const treasuryKey = loadSecp256k1(requireEnv("TREASURY_PRIVATE_KEY"));
@@ -34,6 +35,13 @@ export async function deployVault(): Promise<DeployResult> {
   const wasm = new Uint8Array(await readFile(wasmPath));
   const signed = JSON.parse(await readFile(signedPath, "utf8")) as SignedMandateFile;
   const m = signed.mandate;
+
+  if (m.venueAllowlist.length !== m.venueAddresses.length) {
+    throw new Error(
+      `Mandate venueAllowlist (${m.venueAllowlist.length}) and venueAddresses ` +
+        `(${m.venueAddresses.length}) must be the same length.`,
+    );
+  }
 
   const args = Args.fromMap({
     agent: CLValue.newCLKey(Key.newKey(agentAccountHash)),
@@ -47,6 +55,7 @@ export async function deployVault(): Promise<DeployResult> {
     price_floor: CLValue.newCLUInt512(m.priceFloor),
     price_ceiling: CLValue.newCLUInt512(m.priceCeiling),
     venues: clStringList(m.venueAllowlist),
+    venue_addresses: clKeyList(m.venueAddresses),
   });
 
   const tx = new SessionBuilder()
