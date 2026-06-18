@@ -6,7 +6,7 @@ import type { VaultEvent } from "../types.js";
 const NOW = 1_000_000;
 
 const seq: VaultEvent[] = [
-  { kind: "MandateInitialised", treasury: "0xt", agent: "0xa", totalSell: "1000000", endTimeMs: NOW + 60_000, maxSlippageBps: 100 },
+  { kind: "MandateInitialised", treasury: "0xt", agent: "0xa", sellAsset: "CSPR", buyAsset: "USDC", totalSell: "1000000", endTimeMs: NOW + 60_000, maxSlippageBps: 100 },
   { kind: "VaultFunded", amount: "1000000", balance: "1000000" },
   { kind: "SliceExecuted", sliceId: 0, sellAmount: "100000", quotedOut: "200000", minOut: "198000", venue: "cspr.trade", soldSoFar: "100000", deployHash: "0xdeploy0" },
   { kind: "FillRecorded", sliceId: 0, boughtAmount: "199000", swapDeployHash: "0xswap0", boughtSoFar: "199000" },

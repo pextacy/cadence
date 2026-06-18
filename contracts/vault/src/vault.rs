@@ -48,6 +48,8 @@ pub struct MandateInitialised {
     pub agent: Address,
     pub mandate_digest: Bytes,
     pub signature: Bytes,
+    pub sell_asset: String,
+    pub buy_asset: String,
     pub total_sell: U512,
     pub end_time_ms: u64,
     pub max_slippage_bps: u32,
@@ -167,6 +169,8 @@ pub struct ExecutionVault {
     signature: Var<Bytes>,
 
     // Decoded limits
+    sell_asset: Var<String>,
+    buy_asset: Var<String>,
     total_sell: Var<U512>,
     end_time_ms: Var<u64>,
     max_slippage_bps: Var<u32>,
@@ -203,6 +207,8 @@ impl ExecutionVault {
         agent: Address,
         mandate_digest: Bytes,
         signature: Bytes,
+        sell_asset: String,
+        buy_asset: String,
         total_sell: U512,
         end_time_ms: u64,
         max_slippage_bps: u32,
@@ -230,6 +236,8 @@ impl ExecutionVault {
         self.agent.set(agent);
         self.mandate_digest.set(mandate_digest.clone());
         self.signature.set(signature.clone());
+        self.sell_asset.set(sell_asset.clone());
+        self.buy_asset.set(buy_asset.clone());
         self.total_sell.set(total_sell);
         self.end_time_ms.set(end_time_ms);
         self.max_slippage_bps.set(max_slippage_bps);
@@ -249,6 +257,8 @@ impl ExecutionVault {
             agent,
             mandate_digest,
             signature,
+            sell_asset,
+            buy_asset,
             total_sell,
             end_time_ms,
             max_slippage_bps,
@@ -460,6 +470,12 @@ impl ExecutionVault {
     pub fn get_agent(&self) -> Address {
         self.agent.get_or_revert_with(Error::NotAgent)
     }
+    pub fn get_sell_asset(&self) -> String {
+        self.sell_asset.get_or_default()
+    }
+    pub fn get_buy_asset(&self) -> String {
+        self.buy_asset.get_or_default()
+    }
     pub fn get_total_sell(&self) -> U512 {
         self.total_sell.get_or_default()
     }
@@ -546,6 +562,8 @@ mod tests {
                 agent,
                 mandate_digest: digest32(),
                 signature: Bytes::from(vec![1u8; 65]),
+                sell_asset: "CSPR".to_string(),
+                buy_asset: "USDC".to_string(),
                 total_sell: U512::from(TOTAL_SELL),
                 end_time_ms: END_TIME_MS,
                 max_slippage_bps: SLIPPAGE_BPS,
@@ -733,6 +751,8 @@ mod tests {
             fx.agent,
             digest32(),
             Bytes::from(vec![1u8; 65]),
+            "CSPR".to_string(),
+            "USDC".to_string(),
             U512::from(TOTAL_SELL),
             END_TIME_MS,
             SLIPPAGE_BPS,

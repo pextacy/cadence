@@ -31,6 +31,10 @@ export function Rail({ connection }: { connection: ConnectionStatus }): JSX.Elem
           <span className="idx" aria-hidden="true">·</span>
           Overview
         </NavLink>
+        <NavLink to="/portfolio" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+          <span className="idx" aria-hidden="true">·</span>
+          Portfolio
+        </NavLink>
 
         <span className="eyebrow nav-eyebrow" style={{ marginTop: 14 }}>
           Lifecycle

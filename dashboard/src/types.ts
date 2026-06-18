@@ -7,7 +7,7 @@ export type VaultStatus = "Funded" | "Active" | "Paused" | "Completed" | "Expire
  * state from — there is no mock layer.
  */
 export type VaultEvent =
-  | { kind: "MandateInitialised"; treasury: string; agent: string; totalSell: string; endTimeMs: number; maxSlippageBps: number }
+  | { kind: "MandateInitialised"; treasury: string; agent: string; sellAsset: string; buyAsset: string; totalSell: string; endTimeMs: number; maxSlippageBps: number }
   | { kind: "VaultFunded"; amount: string; balance: string }
   | { kind: "SliceExecuted"; sliceId: number; sellAmount: string; quotedOut: string; minOut: string; venue: string; soldSoFar: string; deployHash?: string; atMs?: number }
   | { kind: "FillRecorded"; sliceId: number; boughtAmount: string; swapDeployHash: string; boughtSoFar: string }
@@ -36,6 +36,9 @@ export interface DashboardState {
   status: VaultStatus | "Unknown";
   treasury?: string;
   agent?: string;
+  /** Sell/buy asset symbols from the on-chain MandateInitialised event, if seen. */
+  sellAsset?: string;
+  buyAsset?: string;
   totalSell: bigint;
   soldSoFar: bigint;
   boughtSoFar: bigint;

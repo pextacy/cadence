@@ -58,7 +58,7 @@ A mandate is the only thing the treasurer signs. Suggested schema:
   "maxSlippageBps": 100,                    // 1.00%
   "priceFloor": "0.0",                      // optional, buyAsset per sellAsset
   "priceCeiling": "0.0",                    // optional
-  "strategy": "TWAP",                       // TWAP | VWAP (stretch)
+  "strategy": "TWAP",                       // TWAP | VWAP | ADAPTIVE
   "venueAllowlist": ["cspr.trade"],
   "nonce": "<unique>"
 }
@@ -119,10 +119,18 @@ cannot bypass.
 - Input: mandate + recent market snapshot + remaining size + elapsed time.
 - Output: a strictly-typed proposal `{ sliceSize, notBefore, maxSlippageBps, reason }`.
 - The planner must return JSON only and never request actions outside the mandate. The executor treats planner output as **untrusted input** and validates everything.
+- **Strategy registry** (`agent/src/planner/strategies/`): a pure, deterministic function per mandate strategy produces a *reference* slice size + suggested slippage that guides the planner. `TWAP` splits the remainder evenly; `VWAP` caps the slice to a participation rate of observed sell-side depth (falls back to TWAP when depth is unknown); `ADAPTIVE` shrinks the slice and tightens slippage inversely to volatility. These are guidance only — never authority.
 
 ### Executor (deterministic)
 - No randomness, no LLM calls. Pure validation + submission + retry/backoff.
 - Pauses (does not guess) on: quote failure, abnormal volatility, repeated reverts, or missing data.
+- **Circuit breaker** (`agent/src/executor/circuit-breaker/`): a pure state machine consulted before each slice. It trips **open** (pausing the vault and stopping, funds left safe for later settlement) when volatility reaches the trip threshold or after N consecutive non-fills, and re-closes only once volatility falls back below a lower reset threshold (hysteresis). Volatility is taken from purchased x402 data, or estimated as realised volatility from the agent's own mid-price samples when none is purchased — never fabricated.
+
+### Portfolio (concurrent mandates)
+- **One vault per mandate** keeps custody isolated; the portfolio layer (`agent/src/portfolio/`) lives entirely in the agent and never commingles funds.
+- A pure, deterministic **scheduler** (`scheduler.ts`) selects the next mandate to act on by *time pressure* — remaining size per millisecond left until deadline — with deadline then id tie-breaks, so selection is reproducible. The immutable **`Portfolio`** (`manager.ts`) holds each mandate's track and returns a new instance on every state advance.
+- A **manifest** (`manifest.ts`, validated with Zod; unique vault hashes enforced) lists `{ signedMandatePath, vaultContractHash, treasuryAccountHash? }` per mandate. Set `PORTFOLIO_MANIFEST_PATH` to run `runPortfolio` instead of the single-mandate loop. Each mandate keeps its own circuit breaker; paused tracks are left safe for later settlement.
+- **Multi-pair.** Each mandate carries its own `sellAsset`/`buyAsset` (`RuntimeMandate`), so a portfolio can execute several pairs concurrently. The executor quotes and swaps each mandate's own pair, and realised volatility is tracked in a separate price window per pair. (The dashboard's portfolio table denominates figures in the configured `VITE_SELL_ASSET`/`VITE_BUY_ASSET` — accurate for a single-pair portfolio; per-vault asset labels for mixed pairs need the asset symbols emitted on-chain, a contract follow-up.)
 
 ## 6. Toolkit integration details
 
@@ -199,11 +207,13 @@ The dashboard is the treasurer's control surface. It must feel calm and trustwor
 2. **Live execution** — the four headline figures, a progress indicator for the order, a live slice feed (each with status, price, explorer link, and reason), the most recent x402 data-purchase proof, and pause/resume controls.
 3. **Final report** — average price, totals, slice count, fees, and slippage saved vs the naive baseline, with a link to the full on-chain audit trail.
 
+Plus a desk-wide **Portfolio** view (when several mandates run concurrently): aggregate figures (mandate count, active, total remaining, aggregate average price, nearest deadline) over a per-vault table. It streams one WebSocket per vault (`VITE_VAULT_CONTRACT_HASHES`, comma-separated) and reconstructs each vault's state independently — same real-states-only discipline.
+
 ### Data source
 All dashboard data derives from real chain state and agent events via CSPR.cloud streaming (§6). There is no mock layer; if state is unavailable, the UI shows an honest loading or error state rather than fabricated values.
 
 ## 10. Security model
-- **Custody:** only the vault holds funds; the agent service holds none.
+- **Custody:** only the vault holds funds; the agent service holds none. Swap proceeds are delivered to the treasury (`TREASURY_ACCOUNT_HASH`), never to the agent — the agent is never a recipient of funds.
 - **Authority:** the vault is the final authority; the LLM has none and never holds keys.
 - **Replay:** mandate `nonce` + one-shot `init` prevent re-use.
 - **Liveness:** if the agent dies mid-order, funds remain safe in the vault and `settle()` can be called after `end_time` by anyone to return remaining funds to the treasury.
@@ -213,9 +223,9 @@ All dashboard data derives from real chain state and agent events via CSPR.cloud
 The final report (emitted on settle) includes: realised average price, total sold/bought, number of slices, fees, and **slippage saved vs a naive single-market-order baseline** computed on the same pool. This number is the headline proof of value in the demo.
 
 ## 12. Roadmap (post-buildathon)
-- VWAP and adaptive strategies; volatility-aware circuit breaker.
+- ~~VWAP and adaptive strategies; volatility-aware circuit breaker.~~ **Implemented** — see the strategy registry (`agent/src/planner/strategies/`) and circuit breaker (`agent/src/executor/circuit-breaker/`) in §5.
 - Multi-venue smart routing and best-execution across pools.
-- Multi-pair and multi-mandate portfolio management.
+- ~~Multi-mandate **and multi-pair** portfolio management.~~ **Implemented** — the portfolio scheduler/manager (`agent/src/portfolio/`) runs several mandates concurrently, each with its own sell/buy pair (§5). Remaining: emitting asset symbols on-chain so the dashboard can label mixed-pair portfolios per vault.
 - Mandate registry + role-based treasury permissions.
 - Cross-chain execution once supporting infrastructure is available.
 

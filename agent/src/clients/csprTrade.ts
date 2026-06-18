@@ -42,11 +42,16 @@ export class CsprTradeClient {
     await this.session.connect();
   }
 
-  /** Fetch a fresh quote for selling `amount` of `tokenIn` into `tokenOut`. */
+  /**
+   * Fetch a fresh quote for selling `amount` of `tokenIn` into `tokenOut`. An
+   * optional `venue` hint requests a specific venue/pool and labels the returned
+   * quote with it; without a hint the server's default route is used.
+   */
   async getQuote(params: {
     tokenIn: string;
     tokenOut: string;
     amount: bigint;
+    venue?: string;
   }): Promise<Quote> {
     const tool = this.session.resolveTool(["get_quote", "quote"], /quote/i);
     const raw = await this.session.call<RawQuote>(tool, {
@@ -54,18 +59,41 @@ export class CsprTradeClient {
       token_out: params.tokenOut,
       amount: params.amount.toString(),
       type: "exact_in",
+      ...(params.venue ? { venue: params.venue } : {}),
     });
     const venueAddress = raw.venue_address ?? raw.venueAddress ?? raw.pool;
     if (!venueAddress) {
       throw new Error("CSPR.trade quote did not include a venue/pool address");
     }
     return {
-      venue: this.venue,
+      venue: params.venue ?? this.venue,
       venueAddress,
       sellAmount: params.amount,
       quotedOut: pickAmount(raw),
       ...(raw.route_id ?? raw.routeId ? { routeId: raw.route_id ?? raw.routeId } : {}),
     };
+  }
+
+  /**
+   * Fetch quotes across several candidate venues for the same swap, for
+   * best-execution selection. Venues that fail to quote are skipped; the result
+   * preserves request order. Throws only if no venue produced a quote.
+   */
+  async getQuotes(
+    params: { tokenIn: string; tokenOut: string; amount: bigint },
+    venues: readonly string[],
+  ): Promise<Quote[]> {
+    const targets = venues.length > 0 ? venues : [this.venue];
+    const settled = await Promise.allSettled(
+      targets.map((venue) => this.getQuote({ ...params, venue })),
+    );
+    const quotes = settled
+      .filter((r): r is PromiseFulfilledResult<Quote> => r.status === "fulfilled")
+      .map((r) => r.value);
+    if (quotes.length === 0) {
+      throw new Error("CSPR.trade returned no quotes for any allowlisted venue");
+    }
+    return quotes;
   }
 
   /**

@@ -12,6 +12,10 @@ export type VaultStatus = "Funded" | "Active" | "Paused" | "Completed" | "Expire
  * match the Casper block time.
  */
 export interface RuntimeMandate {
+  /** Symbol of the asset being sold (e.g. "CSPR"). */
+  sellAsset: string;
+  /** Symbol of the asset being bought (e.g. "USDC"). */
+  buyAsset: string;
   totalSell: bigint;
   endTimeMs: number;
   maxSlippageBps: number;

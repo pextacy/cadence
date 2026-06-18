@@ -7,6 +7,8 @@ const VENUE_ADDR = "account-hash-" + "00".repeat(32);
 
 function mandate(over: Partial<RuntimeMandate> = {}): RuntimeMandate {
   return {
+    sellAsset: "CSPR",
+    buyAsset: "USDC",
     totalSell: 1_000_000n,
     endTimeMs: NOW + 1_000_000,
     maxSlippageBps: 100,
