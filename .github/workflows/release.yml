@@ -1,0 +1,120 @@
+name: Release
+
+# Release scaffold — NO auto-deploy. This builds and publishes release artifacts
+# only after an explicit human approval through a protected GitHub Environment.
+# Triggered by a version tag (v*) or manually via the Actions UI. Deployment to a
+# live network is intentionally NOT performed here; it remains a separate, manual,
+# operator-run step (scripts/src/deploy.ts) so funds-moving installs are never
+# initiated by CI.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag/version to release (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 1: build artifacts. No approval needed to *build*; nothing is published
+  # or deployed in this job.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build release artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify VERSION matches tag
+        run: |
+          if [ ! -f VERSION ]; then
+            echo "::error::VERSION file is missing"; exit 1
+          fi
+          file_version="$(tr -d '[:space:]' < VERSION)"
+          if [ "$file_version" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::VERSION ($file_version) does not match tag (${{ steps.version.outputs.version }})"; exit 1
+          fi
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Build agent image (no push)
+        run: docker build -t cadence-agent:${{ steps.version.outputs.version }} .
+
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: publish — GATED on the "release" Environment, which is configured in
+  # repo settings to require a manual reviewer approval before this job runs.
+  # This is the manual-approval gate. It only publishes a GitHub Release; it does
+  # NOT deploy contracts or start the agent against any network.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish GitHub Release (manual approval)
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          version="${{ needs.build.outputs.version }}"
+          if [ ! -f CHANGELOG.md ]; then
+            echo "body=Release ${version}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Extract the section for this version up to the next "## " heading.
+          awk -v ver="$version" '
+            $0 ~ "^## \\[?" ver "\\]?" { capture=1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No matching CHANGELOG section for ${version}." > release-notes.md
+          fi
+
+      - name: "Create GitHub Release (TODO: attach wasm artifacts once published by CI)"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: Cadence ${{ needs.build.outputs.tag }}
+          body_path: release-notes.md
+          draft: true
+          prerelease: false
+
+      # NOTE: Network deployment is intentionally omitted. Contract installs and
+      # agent rollout remain a manual operator step run outside CI.
