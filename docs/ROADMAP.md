@@ -18,7 +18,7 @@ starts.
 | 2a | Compose `AccessControl` into the vault (RBAC + `set_guardian`) | ✅ Done |
 | 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (fees + escrow-attestation path remain) |
 | 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (idempotent-pause robustness remains) |
-| **4** | **`VaultFactory` + `VaultRegistry` end-to-end create/register flow** | 🟡 Contracts built; deploy-flow integration pending |
+| 4 | `VaultFactory` + `VaultRegistry` create/register flow | ✅ Contracts done+tested (deploy-script call is testnet-gated) |
 | **5** | **`TreasuryMultisig` gating + `OracleAggregator` band cross-check** | 🟡 Contracts built; integration pending |
 | 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (on-chain reconciliation + finality-gating remain) |
 | X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | ⏳ Pending |
@@ -122,24 +122,24 @@ vault status / tolerate per-vault reverts. Out of scope for the happy-path proof
 
 ---
 
-## Wave 4 — Factory + Registry end-to-end
+## Wave 4 — Factory + Registry — DONE (contracts) / testnet-gated (script)
 
-**Built:** `vault-registry` (enumerable index, treasury→vaults, status) and
-`vault-factory` (`create_vault` using the **record-intent** model, since Casper
-has no EVM-style on-chain wasm instantiation) with a `VaultRegistration` trait.
+**Done + tested on-chain (34 tests):** `vault-factory/tests/factory.rs` deploys a
+**real** `VaultRegistry` + `VaultFactory`, grants the factory the registry writer
+role (`grant_writer`), and proves `create_vault` records an intent AND
+cross-contract `register`s the vault — with negative tests for non-admin callers,
+revoked admin, and duplicate registration. **Decision gate resolved:** Casper has
+no EVM-style on-chain wasm instantiation, so the **record-intent + emit-init-args**
+model is implemented (`create_vault(vault, treasury, agent, mandate_hash)` takes the
+target address; a script deploys the wasm). The `VaultRegistration` trait is the
+proven cross-contract seam.
 
-**Remaining:**
-1. **Decision gate:** confirm whether Odra 2.8.1 can instantiate a stored
-   contract-package version on-chain. If yes → `create_vault` instantiates and
-   registers atomically. If no (likely) → keep the record-intent + emit-init-args
-   model and have `scripts/src/deploy.ts` consume the registry entry (a real
-   registry-driven deploy flow, just script-assisted).
-2. Wire `factory → registry` via the `VaultRegistration` trait end-to-end.
-3. `scripts/src/deploy.ts`: deploy via the factory/registry flow and write the
-   resulting vault to the deployment manifest (idempotent).
-
-**Green gate:** factory test creates+registers a vault (or records intent),
-registry enumerates it and reverse-indexes by treasury; deploy script round-trips.
+**Remaining (testnet-gated — intentionally not shipped blind, per CLAUDE.md §4.7):**
+a `scripts/` entrypoint that, given a deployed vault address + the registry hash,
+submits the registry `register` (mirroring `fund.ts`'s
+`ContractCallBuilder.byHash(...).entryPoint(...)`) and records it in the manifest.
+Not written speculatively: its runtime correctness depends on Casper `Key`
+encoding (contract vs package hash) that must be verified against a live node.
 
 ---
 
