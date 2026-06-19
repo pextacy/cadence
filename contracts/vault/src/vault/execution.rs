@@ -6,7 +6,11 @@ use odra::casper_types::U512;
 use odra::prelude::*;
 use odra::ContractRef;
 
+use cadence_common::checked::checked_mul;
+use cadence_common::price::implied_price;
+use cadence_common::scale::BPS_DENOMINATOR;
 use cadence_dex_adapter::adapter::VenueAdapterContractRef;
+use cadence_price_oracle::types::OracleAdapterContractRef;
 
 use super::errors::Error;
 use super::events::{DecisionAttested, FillRecorded, SliceExecuted};
@@ -72,6 +76,10 @@ impl ExecutionVault {
         ) {
             self.env().revert(e);
         }
+        // 5b. (optional) implied price within the oracle deviation band — a
+        //     dynamic guard layered on top of the static mandate band.
+        self.check_oracle_band(quoted_out, sell_amount);
+
         // 6. venue ∈ allowlist — and resolve its mandate-bound destination. The
         //    caller never supplies the address, so it cannot redirect the funds.
         if !self.venue_allowlist.get_or_default(&venue) {
@@ -187,6 +195,44 @@ impl ExecutionVault {
             swap_deploy_hash,
             bought_so_far: bought,
         });
+    }
+
+    /// Optional oracle cross-check: when an oracle is configured, require this
+    /// slice's implied price to be within `oracle_max_deviation_bps` of the
+    /// oracle's price for the configured pair. A no-op when no oracle is set.
+    /// Cross-contract read via the `OracleAdapter` trait (the same interface the
+    /// `SignedPriceOracle` and `OracleAggregator` expose).
+    fn check_oracle_band(&self, quoted_out: U512, sell_amount: U512) {
+        let oracle = match self.oracle.get() {
+            Some(addr) => addr,
+            None => return,
+        };
+        let max_dev = self.oracle_max_deviation_bps.get_or_default();
+        let implied = match implied_price(quoted_out, sell_amount) {
+            Ok(v) => v,
+            Err(_) => self.env().revert(Error::Overflow),
+        };
+        let oracle_price = OracleAdapterContractRef::new(self.env(), oracle)
+            .latest_price(self.oracle_pair.get_or_default())
+            .price;
+        // |implied - oracle| * BPS <= oracle * max_dev   (cross-multiplied to
+        // avoid division; checked to surface any overflow as a clean revert).
+        let diff = if implied > oracle_price {
+            implied - oracle_price
+        } else {
+            oracle_price - implied
+        };
+        let lhs = match checked_mul(diff, U512::from(BPS_DENOMINATOR)) {
+            Ok(v) => v,
+            Err(_) => self.env().revert(Error::Overflow),
+        };
+        let rhs = match checked_mul(oracle_price, U512::from(max_dev)) {
+            Ok(v) => v,
+            Err(_) => self.env().revert(Error::Overflow),
+        };
+        if lhs > rhs {
+            self.env().revert(Error::OraclePriceDeviation);
+        }
     }
 
     /// Record the agent's decision reasoning for a slice (audit trail).

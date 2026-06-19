@@ -81,6 +81,14 @@ pub struct ExecutionVault {
 
     pub(super) status: Var<Status>,
 
+    // Optional price-oracle cross-check. When `oracle` is set, execute_slice also
+    // checks the slice's implied price against the oracle's price for `oracle_pair`
+    // within `oracle_max_deviation_bps` — a dynamic guard on top of the static
+    // mandate band. Unset (the default) disables the check.
+    pub(super) oracle: Var<Address>,
+    pub(super) oracle_pair: Var<String>,
+    pub(super) oracle_max_deviation_bps: Var<u32>,
+
     /// Role-based access control. Composed (never deployed standalone) so the
     /// vault shares the desk-wide RBAC vocabulary: TREASURY/AGENT/GUARDIAN are
     /// bootstrapped at `init`, and a GUARDIAN (e.g. the desk Guardian contract)

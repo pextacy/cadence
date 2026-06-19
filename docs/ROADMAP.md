@@ -19,7 +19,7 @@ starts.
 | 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (fees + escrow-attestation path remain) |
 | 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (idempotent-pause robustness remains) |
 | 4 | `VaultFactory` + `VaultRegistry` create/register flow | ✅ Contracts done+tested (deploy-script call is testnet-gated) |
-| **5** | **`TreasuryMultisig` gating + `OracleAggregator` band cross-check** | 🟡 Contracts built; integration pending |
+| 5 | `OracleAggregator` band cross-check + `TreasuryMultisig` | ✅ Oracle cross-check done; multisig contract done, gating is a design choice |
 | 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (on-chain reconciliation + finality-gating remain) |
 | X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | ⏳ Pending |
 
@@ -143,18 +143,25 @@ encoding (contract vs package hash) that must be verified against a live node.
 
 ---
 
-## Wave 5 — Multisig gating + Oracle aggregation
+## Wave 5 — Oracle band cross-check DONE / Multisig gating is a design choice
 
-**Built:** `treasury-multisig` (M-of-N propose/approve/revoke/execute over action
-hashes) and `OracleAggregator` (median-of-N over source `OracleAdapter`s, quorum +
-per-source staleness drop), both unit-tested.
+**Oracle cross-check — DONE.** The vault now optionally cross-checks each slice's
+implied price against an oracle: a treasury-only `set_oracle(oracle, pair,
+max_deviation_bps)` configures it, and `execute_slice` calls the oracle
+cross-contract via `OracleAdapterContractRef::latest_price(pair)` (the same
+`OracleAdapter` trait `SignedPriceOracle` and `OracleAggregator` implement),
+reverting `OraclePriceDeviation` when the deviation exceeds the band. Unset by
+default (existing slices unaffected). `vault/tests/integration_oracle.rs` proves
+pass-within-band and revert-outside-band against a mock `OracleAdapter`.
 
-**Remaining:**
-1. Gate a high-privilege action (e.g. `factory.create_vault` or guardian config)
-   behind a `TreasuryMultisig` proposal/approval/execute.
-2. Optionally let the vault cross-check `quoted_out`-implied price against
-   `OracleAggregator::latest_price` in `execute_slice`, in addition to the static
-   mandate band. Behind a config flag (oracle address may be unset).
+**Multisig — contract done+tested; gating is a deliberate design choice, not
+shipped blind.** `treasury-multisig` (M-of-N propose/approve/revoke/execute) is
+complete and unit-tested, but its `execute` *records* approval of an action hash —
+it does not dispatch a call. Gating `factory.create_vault` therefore needs either
+(a) the factory to cross-contract-read the multisig's approval of a computed
+action hash, or (b) extending the multisig to dispatch arbitrary calls (a larger,
+security-sensitive change). Which one is a product decision; left out rather than
+guessed (CLAUDE.md §4.7).
 
 **Green gate:** multisig threshold path (under/at/over quorum, revoke, no
 double-execute); aggregator median + stale-drop + quorum-not-met revert; the vault

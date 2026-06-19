@@ -49,4 +49,8 @@ pub enum Error {
     NotPaused = 22,
     /// Arithmetic overflow in a guardrail computation.
     Overflow = 23,
+    /// The slice's implied price deviates from the configured oracle price by
+    /// more than the allowed band (an extra, dynamic check beyond the static
+    /// mandate band; only enforced when an oracle is configured).
+    OraclePriceDeviation = 24,
 }
