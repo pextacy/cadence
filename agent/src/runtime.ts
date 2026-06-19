@@ -20,6 +20,28 @@ export function log(event: string, detail: Record<string, unknown> = {}): void {
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * The bounded delay (ms) to wait before submitting a slice the planner scheduled
+ * for `notBeforeMs`. This is how the loop honours the strategy's pacing (TWAP/VWAP
+ * spread a child order across the window); without it every slice fires back-to-back
+ * at the poll cadence and the time-weighting is silently lost.
+ *
+ * Returns 0 when the slice is already due (or its scheduled time is in the past or
+ * non-finite); never negative; and is capped to the mandate deadline so a slice
+ * scheduled beyond the window can never block the loop past `deadlineMs`.
+ */
+export function submissionDelayMs(
+  notBeforeMs: number,
+  nowMs: number,
+  deadlineMs: number,
+): number {
+  if (!Number.isFinite(notBeforeMs)) return 0;
+  const untilDue = notBeforeMs - nowMs;
+  if (untilDue <= 0) return 0;
+  const untilDeadline = Math.max(0, deadlineMs - nowMs);
+  return Math.min(untilDue, untilDeadline);
+}
+
+/**
  * Build a market snapshot for the given `sellAsset`/`buyAsset` pair, paying for
  * premium depth/volatility via x402 when a resource is configured. Returns a
  * fully-constructed snapshot (no mutation); degrades to mid-price-only when the

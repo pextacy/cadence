@@ -1,5 +1,7 @@
 import casper from "casper-js-sdk";
 import type * as Casper from "casper-js-sdk";
+import { RpcConfirmationService, type ConfirmationService, type ConfirmOptions } from "./confirm.js";
+import type { VaultStateReader } from "../state/reconcile.js";
 
 // casper-js-sdk is CommonJS; its API is on the default export. Destructure values
 // from default and take type-only names from the namespace import.
@@ -45,6 +47,25 @@ export class VaultClient {
   /** The agent's on-chain account-hash identity ("account-hash-…"). */
   agentAccountHash(): string {
     return this.key.publicKey.accountHash().toPrefixedString();
+  }
+
+  /**
+   * A {@link ConfirmationService} bound to this client's RPC connection, so the
+   * executor can poll the vault entrypoint transactions and the venue swap deploy
+   * to finality over the same node without opening a second connection.
+   */
+  confirmationService(defaults?: ConfirmOptions): ConfirmationService {
+    return new RpcConfirmationService(this.rpc, defaults ?? {});
+  }
+
+  /**
+   * This client's RPC connection narrowed to the read primitives on-chain
+   * reconciliation needs ({@link VaultStateReader}). `RpcClient` structurally
+   * implements both methods, so the executor/loop can seed authoritative vault
+   * state from chain without opening a second connection.
+   */
+  stateReader(): VaultStateReader {
+    return this.rpc as unknown as VaultStateReader;
   }
 
   private async send(entryPoint: string, args: Casper.Args, gasMotes: number): Promise<string> {

@@ -1,5 +1,6 @@
 import type { CsprTradeClient } from "../clients/csprTrade.js";
 import type { VaultClient } from "../clients/vault.js";
+import type { ConfirmationService } from "../clients/confirm.js";
 import type { Quote, RuntimeMandate, SliceProposal, VaultState } from "../types.js";
 import { selectBestQuote } from "../routing/best-execution.js";
 import { validateSlice, type GuardrailCode } from "./guardrails.js";
@@ -21,6 +22,9 @@ export type ExecOutcome =
 export interface ExecutorDeps {
   vault: VaultClient;
   market: CsprTradeClient;
+  /** Polls submitted transactions/deploys to finality so the executor never
+   * advances on an unconfirmed or reverted submission. */
+  confirm: ConfirmationService;
   sellToken: string;
   buyToken: string;
   /** Recipient of swap proceeds — the treasury's Casper account (non-custodial;
@@ -118,6 +122,23 @@ export class Executor {
       return { status: "paused", reason: `execute_slice reverted/failed: ${describe(err)}` };
     }
 
+    // Gate on finality: the slice releases the sell asset on-chain, so the swap
+    // must never fire until that transaction is confirmed included AND did not
+    // revert. A failed guardrail or a timeout leaves the vault for the treasury
+    // rather than swapping against an unconfirmed slice — fail safe, not open.
+    {
+      const confirmed = await this.deps.confirm.confirmTransaction(sliceTxHash);
+      if (confirmed.status !== "success") {
+        return {
+          status: "paused",
+          reason:
+            confirmed.status === "failure"
+              ? `execute_slice reverted on-chain: ${confirmed.errorMessage}`
+              : `execute_slice not confirmed within budget (${sliceTxHash})`,
+        };
+      }
+    }
+
     let swap: { deployHash: string; boughtAmount: bigint };
     try {
       swap = await withRetry(() =>
@@ -139,6 +160,22 @@ export class Executor {
         status: "paused",
         reason: `realised output ${swap.boughtAmount} below committed min_out ${minOut}`,
       };
+    }
+
+    // Gate on the swap deploy landing on-chain before recording the fill: a
+    // record_fill against an unconfirmed (or reverted) swap would attest proceeds
+    // that never settled. Confirm the off-chain venue's deploy hash first.
+    {
+      const settled = await this.deps.confirm.confirmDeploy(swap.deployHash);
+      if (settled.status !== "success") {
+        return {
+          status: "paused",
+          reason:
+            settled.status === "failure"
+              ? `swap deploy reverted on-chain: ${settled.errorMessage}`
+              : `swap deploy not confirmed within budget (${swap.deployHash})`,
+        };
+      }
     }
 
     let recordTxHash: string;

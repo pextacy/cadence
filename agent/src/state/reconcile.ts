@@ -174,6 +174,50 @@ export async function reconcileTrack(
 }
 
 /**
+ * Resolve the authoritative {@link VaultState} to resume from at process start.
+ *
+ * The contract is the authority, so this prefers the on-chain read. The subtle
+ * part is the failure policy: silently resetting to a zero state on a restart —
+ * the behaviour this replaces — makes the agent re-execute slices it already
+ * submitted and desynchronises its `slice_id` bookkeeping from the chain. So on a
+ * read failure this **fails closed** when prior progress was recorded (refusing
+ * to resume from unknown state), and only falls back to a fresh zero state on a
+ * genuine cold start (no prior progress in the local store).
+ */
+export async function resolveStartupState(
+  reader: VaultStateReader,
+  contractKey: string,
+  prevSnapshot: TrackSnapshot | null,
+  fallbackTotalSell: bigint,
+): Promise<{ readonly state: VaultState; readonly source: "chain" | "coldstart" }> {
+  try {
+    const state = await readOnChainVaultState(reader, contractKey);
+    return { state, source: "chain" };
+  } catch (err) {
+    const prior = prevSnapshot?.state;
+    const hadProgress =
+      prior !== undefined && (prior.soldSoFar > 0n || prior.sliceCount > 0);
+    if (hadProgress) {
+      throw new Error(
+        `reconcile: on-chain read failed and prior progress exists ` +
+          `(sold=${prior.soldSoFar}, slices=${prior.sliceCount}); refusing to resume ` +
+          `from unknown state: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return {
+      state: {
+        status: "Active",
+        soldSoFar: 0n,
+        boughtSoFar: 0n,
+        sliceCount: 0,
+        totalSell: fallbackTotalSell,
+      },
+      source: "coldstart",
+    };
+  }
+}
+
+/**
  * Reconcile every track in a portfolio. Tracks are keyed by vault contract hash;
  * `contractKeyOf` maps a track id to its global-state entity key (they differ
  * when the entity prefix is "entity-contract-…" rather than the raw hash).

@@ -62,6 +62,8 @@ export async function runPortfolio(): Promise<void> {
     const executor = new Executor({
       vault,
       market,
+      // Gate every state advance on on-chain finality over this track's RPC.
+      confirm: vault.confirmationService(),
       sellToken: mandate.sellAsset,
       buyToken: mandate.buyAsset,
       // Proceeds go to this mandate's treasury, never the agent — no commingling,

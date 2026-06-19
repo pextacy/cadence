@@ -9,9 +9,31 @@ import {
   readOnChainVaultState,
   reconcileAll,
   reconcileTrack,
+  resolveStartupState,
   type VaultStateReader,
 } from "./reconcile.js";
+import type { TrackSnapshot } from "./store.js";
 import type { VaultState } from "../types.js";
+
+/** A reader whose on-chain read always fails (node down / not found). */
+function failingReader(): VaultStateReader {
+  return {
+    async getStateRootHashLatest() {
+      throw new Error("rpc unreachable");
+    },
+    async queryGlobalStateByStateHash() {
+      throw new Error("rpc unreachable");
+    },
+  };
+}
+
+/** A persisted snapshot carrying prior progress for the fail-closed test. */
+function snapshotWithProgress(soldSoFar: bigint, sliceCount: number): TrackSnapshot {
+  return {
+    ...emptySnapshot("track-1", 100_000n),
+    state: { status: "Active", soldSoFar, boughtSoFar: 0n, sliceCount, totalSell: 100_000n },
+  };
+}
 
 /** Build a fake QueryGlobalStateResult exposing a single CLValue shape. */
 function clResult(clValue: Record<string, unknown>): any {
@@ -230,5 +252,54 @@ describe("reconcileTrack / reconcileAll", () => {
     expect(failures.size).toBe(1);
     expect(snapshots.size).toBe(1);
     expect([...failures.values()][0]?.message).toMatch(/rpc down/);
+  });
+});
+
+describe("resolveStartupState", () => {
+  it("seeds from chain when the on-chain read succeeds", async () => {
+    const reader = makeReader({
+      statusDiscriminant: 1, // Active
+      soldSoFar: "500",
+      boughtSoFar: "480",
+      sliceCount: 3,
+      totalSell: "100000",
+    });
+    const resolved = await resolveStartupState(reader, "key", null, 100_000n);
+    expect(resolved.source).toBe("chain");
+    expect(resolved.state.soldSoFar).toBe(500n);
+    expect(resolved.state.sliceCount).toBe(3);
+    expect(resolved.state.status).toBe("Active");
+  });
+
+  it("falls back to a fresh zero state on a cold start when the read fails", async () => {
+    const resolved = await resolveStartupState(failingReader(), "key", null, 100_000n);
+    expect(resolved.source).toBe("coldstart");
+    expect(resolved.state).toEqual<VaultState>({
+      status: "Active",
+      soldSoFar: 0n,
+      boughtSoFar: 0n,
+      sliceCount: 0,
+      totalSell: 100_000n,
+    });
+  });
+
+  it("treats a zero-progress prior snapshot as a cold start when the read fails", async () => {
+    const prev = snapshotWithProgress(0n, 0);
+    const resolved = await resolveStartupState(failingReader(), "key", prev, 100_000n);
+    expect(resolved.source).toBe("coldstart");
+  });
+
+  it("fails closed when the read fails and prior progress exists (sold > 0)", async () => {
+    const prev = snapshotWithProgress(50n, 0);
+    await expect(resolveStartupState(failingReader(), "key", prev, 100_000n)).rejects.toThrow(
+      /refusing to resume/,
+    );
+  });
+
+  it("fails closed when the read fails and prior slices exist", async () => {
+    const prev = snapshotWithProgress(0n, 2);
+    await expect(resolveStartupState(failingReader(), "key", prev, 100_000n)).rejects.toThrow(
+      /refusing to resume/,
+    );
   });
 });

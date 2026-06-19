@@ -6,6 +6,8 @@ dist/
 **/dist/
 **/wasm/
 target/
+*.tsbuildinfo
+.deployments.json
 
 # Rust / Odra
 Cargo.lock

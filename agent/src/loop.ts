@@ -13,9 +13,10 @@ import {
 } from "./executor/circuit-breaker/breaker.js";
 import { realisedVolatilityBps } from "./executor/circuit-breaker/volatility.js";
 import { loadSignedMandate, toRuntimeMandate } from "./mandate.js";
-import { buildSnapshot, log, sleep, TARGET_SLICES, PRICE_HISTORY_MAX } from "./runtime.js";
+import { buildSnapshot, log, sleep, submissionDelayMs, TARGET_SLICES, PRICE_HISTORY_MAX } from "./runtime.js";
 import type { MarketSnapshot, RuntimeMandate, VaultState } from "./types.js";
 import { FileStateStore, defaultStateDir } from "./state/store.js";
+import { resolveStartupState } from "./state/reconcile.js";
 import { InProcessMetrics, METRICS } from "./observability/metrics.js";
 import { FileAuditLog } from "./observability/audit-log.js";
 import { HealthServer, type HealthState } from "./observability/health.js";
@@ -41,6 +42,8 @@ export async function runAgent(): Promise<void> {
   const executor = new Executor({
     vault,
     market,
+    // Gate every state advance on on-chain finality over the vault's own RPC.
+    confirm: vault.confirmationService(),
     sellToken: mandate.sellAsset,
     buyToken: mandate.buyAsset,
     // Non-custodial: swap proceeds settle directly to the treasury, never the
@@ -66,15 +69,18 @@ export async function runAgent(): Promise<void> {
   // stay fresh — on-chain reconciliation is tracked as ROADMAP Wave 6 follow-up.
   const prevSnapshot = await store.loadSnapshot(trackId);
 
-  // The contract is the authority on state; the agent tracks its own submissions
-  // and the dashboard reconstructs authoritative state from on-chain events.
-  let state: VaultState = {
-    status: "Active",
-    soldSoFar: 0n,
-    boughtSoFar: 0n,
-    sliceCount: 0,
-    totalSell: mandate.totalSell,
-  };
+  // The contract is the authority on state. Seed the resume point from the chain
+  // rather than assuming a fresh zero state: after a crash/restart mid-order,
+  // resetting to zero would re-execute already-submitted slices and desynchronise
+  // the agent's slice_id bookkeeping. `resolveStartupState` reads on-chain and
+  // fails closed if a read fails while prior progress exists (see reconcile.ts).
+  const seeded = await resolveStartupState(
+    vault.stateReader(),
+    trackId,
+    prevSnapshot,
+    mandate.totalSell,
+  );
+  let state: VaultState = seeded.state;
 
   log("agent_start", {
     totalSell: mandate.totalSell.toString(),
@@ -82,6 +88,10 @@ export async function runAgent(): Promise<void> {
     venue: mandate.venueAllowlist,
     strategy: mandate.strategy,
     resumed: prevSnapshot !== null,
+    stateSource: seeded.source,
+    status: state.status,
+    soldSoFar: state.soldSoFar.toString(),
+    sliceCount: state.sliceCount,
   });
 
   // The circuit breaker is consulted before each slice; price history backs the
@@ -120,7 +130,14 @@ export async function runAgent(): Promise<void> {
   };
 
   try {
-    while (state.soldSoFar < mandate.totalSell && Date.now() <= mandate.endTimeMs) {
+    // Only trade while the seeded/on-chain status is Active. A vault resumed in a
+    // Paused/Completed/Expired state must not busy-spin issuing NotActive skips;
+    // it falls through to the settlement decision below.
+    while (
+      state.status === "Active" &&
+      state.soldSoFar < mandate.totalSell &&
+      Date.now() <= mandate.endTimeMs
+    ) {
       const baseSnapshot = await buildSnapshot(cfg, market, agentAccountHash, mandate.sellAsset, mandate.buyAsset);
       priceHistory = [...priceHistory, baseSnapshot.midPrice].slice(-PRICE_HISTORY_MAX);
 
@@ -167,6 +184,17 @@ export async function runAgent(): Promise<void> {
         },
         tsMs: Date.now(),
       });
+
+      // Honour the planner's pacing: a strategy spreads child orders across the
+      // window via `notBeforeMs`. Wait (bounded by the deadline) until the slice is
+      // due before submitting, otherwise the time-weighting is silently lost and
+      // every slice fires at the poll cadence. The quote is fetched fresh inside
+      // the executor after the wait, so the on-chain commitment is never stale.
+      const waitMs = submissionDelayMs(proposal.notBeforeMs, Date.now(), mandate.endTimeMs);
+      if (waitMs > 0) {
+        log("slice_scheduled", { notBeforeMs: proposal.notBeforeMs, waitMs });
+        await sleep(waitMs);
+      }
 
       // Serialise the signed submission through the nonce manager so concurrent
       // tracks never race the agent key (a no-op for a single mandate, but the
@@ -241,9 +269,12 @@ export async function runAgent(): Promise<void> {
     // Settlement is only valid once the cap is reached or the window has closed;
     // the contract reverts otherwise. After a circuit-breaker pause (neither
     // condition met) leave the vault for the treasury to resume or settle.
+    // Never settle a vault that is not Active: a resumed Completed/Expired vault
+    // would revert (or double-settle). Settlement is this run's responsibility
+    // only while the vault is still live.
     const completed = state.soldSoFar >= mandate.totalSell;
     const windowClosed = Date.now() > mandate.endTimeMs;
-    if (completed || windowClosed) {
+    if (state.status === "Active" && (completed || windowClosed)) {
       log("settling", { sold: state.soldSoFar.toString(), bought: state.boughtSoFar.toString() });
       const settleTx = await vault.settle();
       log("settled", { settleTx });
