@@ -11,8 +11,6 @@ use cadence_access_control::AccessControl;
 use odra::casper_types::U512;
 use odra::prelude::*;
 
-use crate::errors::Error;
-
 /// Protocol fee accrual module storage.
 ///
 /// `fee_bps` is the current fee rate in basis points (`25` == 0.25%).
@@ -23,7 +21,7 @@ use crate::errors::Error;
 /// `ROOT_ADMIN` so it can delegate that role.
 #[odra::module(
     events = [FeeAccrued, FeeWithdrawn, FeeRateChanged],
-    errors = Error
+    errors = crate::errors::Error
 )]
 pub struct FeeModule {
     /// Shared RBAC sub-module gating rate changes.

@@ -63,8 +63,10 @@ impl FeeModule {
             self.env().revert(Error::FeeRateTooHigh);
         }
         let deployer = self.env().caller();
-        self.ac.grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
-        self.ac.grant_unchecked(roles::FEE_COLLECTOR, deployer, deployer);
+        self.ac
+            .grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
+        self.ac
+            .grant_unchecked(roles::FEE_COLLECTOR, deployer, deployer);
         self.fee_bps.set(init_fee_bps);
     }
 
@@ -79,8 +81,11 @@ impl FeeModule {
         }
         let previous_bps = self.fee_bps.get_or_default();
         self.fee_bps.set(new_bps);
-        self.env()
-            .emit_event(FeeRateChanged { previous_bps, new_bps, sender: caller });
+        self.env().emit_event(FeeRateChanged {
+            previous_bps,
+            new_bps,
+            sender: caller,
+        });
     }
 
     /// Charge the current fee on `amount` of `asset` and credit it to the
@@ -132,8 +137,11 @@ impl FeeModule {
             self.env().revert(Error::NothingAccrued);
         }
         self.accrued.set(&caller, U512::zero());
-        self.env()
-            .emit_event(FeeWithdrawn { collector: caller, recipient, amount });
+        self.env().emit_event(FeeWithdrawn {
+            collector: caller,
+            recipient,
+            amount,
+        });
         amount
     }
 

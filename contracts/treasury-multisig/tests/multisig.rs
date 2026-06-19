@@ -30,7 +30,14 @@ fn setup_2_of_3() -> Fixture {
             threshold: 2,
         },
     );
-    Fixture { env, ms, alice, bob, carol, outsider }
+    Fixture {
+        env,
+        ms,
+        alice,
+        bob,
+        carol,
+        outsider,
+    }
 }
 
 fn action(tag: u8) -> [u8; 32] {
@@ -182,7 +189,10 @@ fn execute_under_quorum_is_rejected() {
 
     let err = fx.ms.try_execute(id).unwrap_err();
     assert_eq!(err, Error::ThresholdNotMet.into());
-    assert_eq!(fx.ms.get_proposal(id).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        fx.ms.get_proposal(id).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
 
 #[test]

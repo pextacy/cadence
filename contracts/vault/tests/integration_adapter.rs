@@ -27,7 +27,12 @@ const ADAPTER_PRICE: u64 = 2_000_000;
 /// Deploy a Cep18SwapAdapter (priced + reserve-seeded) and a vault whose single
 /// venue address is that adapter, then fund the vault and opt the venue into
 /// adapter routing. Returns the live refs.
-fn setup() -> (HostEnv, ExecutionVaultHostRef, Cep18SwapAdapterHostRef, Address) {
+fn setup() -> (
+    HostEnv,
+    ExecutionVaultHostRef,
+    Cep18SwapAdapterHostRef,
+    Address,
+) {
     let env = odra_test::env();
     let treasury = env.get_account(0);
     let agent = env.get_account(1);
@@ -36,7 +41,9 @@ fn setup() -> (HostEnv, ExecutionVaultHostRef, Cep18SwapAdapterHostRef, Address)
     // 1. Deploy the atomic adapter, set its price, seed its payout reserve.
     let mut adapter = Cep18SwapAdapter::deploy(
         &env,
-        Cep18SwapAdapterInitArgs { venue_id: VENUE.to_string() },
+        Cep18SwapAdapterInitArgs {
+            venue_id: VENUE.to_string(),
+        },
     );
     adapter.set_price(U512::from(ADAPTER_PRICE));
     adapter.with_tokens(U512::from(TOTAL_SELL)).seed_reserve();

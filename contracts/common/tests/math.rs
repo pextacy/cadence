@@ -91,9 +91,15 @@ fn apply_price_at_vault_scale() {
 #[test]
 fn rescale_bridges_1e6_and_1e9() {
     // 1.0 expressed at 1e6 → at 1e9.
-    assert_eq!(rescale(u(PRICE_SCALE_1E6), PRICE_SCALE_1E6, PRICE_SCALE_1E9), Ok(u(PRICE_SCALE_1E9)));
+    assert_eq!(
+        rescale(u(PRICE_SCALE_1E6), PRICE_SCALE_1E6, PRICE_SCALE_1E9),
+        Ok(u(PRICE_SCALE_1E9))
+    );
     // and back.
-    assert_eq!(rescale(u(PRICE_SCALE_1E9), PRICE_SCALE_1E9, PRICE_SCALE_1E6), Ok(u(PRICE_SCALE_1E6)));
+    assert_eq!(
+        rescale(u(PRICE_SCALE_1E9), PRICE_SCALE_1E9, PRICE_SCALE_1E6),
+        Ok(u(PRICE_SCALE_1E6))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -149,18 +155,12 @@ fn slippage_zero_cap_requires_exact_quote() {
 #[test]
 fn implied_price_matches_vault_two_point_zero() {
     // quote 200_000 over sell 100_000 at 1e9 → price 2.0 == 2_000_000_000.
-    assert_eq!(
-        implied_price(u(200_000), u(100_000)),
-        Ok(u(2_000_000_000))
-    );
+    assert_eq!(implied_price(u(200_000), u(100_000)), Ok(u(2_000_000_000)));
 }
 
 #[test]
 fn implied_price_zero_sell_amount_is_div_by_zero() {
-    assert_eq!(
-        implied_price(u(200_000), u(0)),
-        Err(MathError::DivByZero)
-    );
+    assert_eq!(implied_price(u(200_000), u(0)), Err(MathError::DivByZero));
 }
 
 #[test]
@@ -180,12 +180,7 @@ fn price_band_rejects_price_above_ceiling() {
     // vault rejects_price_outside_band: band [1.5, 2.5], quote priced 3.0.
     // sell 100_000, quote 300_000 → price 3.0 == 3_000_000_000 > ceiling 2.5.
     assert_eq!(
-        check_price_band(
-            u(300_000),
-            u(100_000),
-            u(1_500_000_000),
-            u(2_500_000_000),
-        ),
+        check_price_band(u(300_000), u(100_000), u(1_500_000_000), u(2_500_000_000),),
         Err(PriceError::OutOfBand)
     );
 }
@@ -194,12 +189,7 @@ fn price_band_rejects_price_above_ceiling() {
 fn price_band_accepts_in_band() {
     // price 2.0 inside [1.5, 2.5].
     assert_eq!(
-        check_price_band(
-            u(200_000),
-            u(100_000),
-            u(1_500_000_000),
-            u(2_500_000_000),
-        ),
+        check_price_band(u(200_000), u(100_000), u(1_500_000_000), u(2_500_000_000),),
         Ok(())
     );
 }

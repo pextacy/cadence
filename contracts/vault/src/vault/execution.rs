@@ -62,9 +62,11 @@ impl ExecutionVault {
             self.env().revert(e);
         }
         // 4. effective slippage (quote vs min_out) <= max_slippage_bps.
-        if let Err(e) =
-            guardrails::check_slice_slippage(quoted_out, min_out, self.max_slippage_bps.get_or_default())
-        {
+        if let Err(e) = guardrails::check_slice_slippage(
+            quoted_out,
+            min_out,
+            self.max_slippage_bps.get_or_default(),
+        ) {
             self.env().revert(e);
         }
         // 5. quoted price within [price_floor, price_ceiling] (if set).
@@ -146,11 +148,11 @@ impl ExecutionVault {
         if let Err(e) = guardrails::check_fill_min_out(bought_amount, min_out) {
             self.env().revert(e);
         }
-        let bought = match guardrails::add_bought(self.bought_so_far.get_or_default(), bought_amount)
-        {
-            Ok(v) => v,
-            Err(e) => self.env().revert(e),
-        };
+        let bought =
+            match guardrails::add_bought(self.bought_so_far.get_or_default(), bought_amount) {
+                Ok(v) => v,
+                Err(e) => self.env().revert(e),
+            };
         self.bought_so_far.set(bought);
         self.slice_filled.set(&slice_id, true);
         self.env().emit_event(FillRecorded {
@@ -182,11 +184,11 @@ impl ExecutionVault {
         if let Err(e) = guardrails::check_fill_min_out(bought_amount, min_out) {
             self.env().revert(e);
         }
-        let bought = match guardrails::add_bought(self.bought_so_far.get_or_default(), bought_amount)
-        {
-            Ok(v) => v,
-            Err(e) => self.env().revert(e),
-        };
+        let bought =
+            match guardrails::add_bought(self.bought_so_far.get_or_default(), bought_amount) {
+                Ok(v) => v,
+                Err(e) => self.env().revert(e),
+            };
         self.bought_so_far.set(bought);
         self.slice_filled.set(&slice_id, true);
         self.env().emit_event(FillRecorded {

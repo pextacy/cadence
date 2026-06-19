@@ -32,7 +32,11 @@ impl MockOracle {
 
     pub fn latest_price(&self, pair: String) -> PriceData {
         let _ = pair;
-        PriceData { price: self.price.get_or_default(), timestamp_ms: 0, round: 1 }
+        PriceData {
+            price: self.price.get_or_default(),
+            timestamp_ms: 0,
+            round: 1,
+        }
     }
 }
 
@@ -55,11 +59,20 @@ fn setup(oracle_price: u64, max_dev_bps: u32) -> (HostEnv, ExecutionVaultHostRef
     let treasury = env.get_account(0);
     env.set_caller(treasury);
 
-    let oracle = MockOracle::deploy(&env, MockOracleInitArgs { price: U512::from(oracle_price) });
+    let oracle = MockOracle::deploy(
+        &env,
+        MockOracleInitArgs {
+            price: U512::from(oracle_price),
+        },
+    );
     let mut vault = try_deploy(&env, happy_args(treasury)).expect("vault deploys");
     env.set_caller(treasury);
     vault.with_tokens(U512::from(TOTAL_SELL)).fund();
-    vault.set_oracle(oracle.contract_address(), "CSPR/USDC".to_string(), max_dev_bps);
+    vault.set_oracle(
+        oracle.contract_address(),
+        "CSPR/USDC".to_string(),
+        max_dev_bps,
+    );
 
     (env, vault)
 }
@@ -98,5 +111,9 @@ fn slice_reverts_when_outside_oracle_band() {
         )
         .unwrap_err();
     assert_eq!(err, Error::OraclePriceDeviation.into());
-    assert_eq!(vault.get_sold_so_far(), U512::zero(), "rejected slice must not advance progress");
+    assert_eq!(
+        vault.get_sold_so_far(),
+        U512::zero(),
+        "rejected slice must not advance progress"
+    );
 }

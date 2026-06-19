@@ -29,7 +29,13 @@ fn setup_with_bps(bps: u32) -> Fixture {
     let bob = env.get_account(2);
     env.set_caller(admin);
     let contract = FeeModule::deploy(&env, FeeModuleInitArgs { init_fee_bps: bps });
-    Fixture { env, contract, admin, alice, bob }
+    Fixture {
+        env,
+        contract,
+        admin,
+        alice,
+        bob,
+    }
 }
 
 fn u(n: u64) -> U512 {
@@ -51,7 +57,9 @@ fn deploy_above_max_rate_reverts() {
     env.set_caller(admin);
     let result = FeeModule::try_deploy(
         &env,
-        FeeModuleInitArgs { init_fee_bps: MAX_FEE_BPS + 1 },
+        FeeModuleInitArgs {
+            init_fee_bps: MAX_FEE_BPS + 1,
+        },
     );
     assert!(result.is_err());
 }

@@ -21,7 +21,13 @@ fn setup() -> Fixture {
     let bob = env.get_account(2);
     env.set_caller(admin);
     let contract = AccessControlContract::deploy(&env, NoArgs);
-    Fixture { env, contract, admin, alice, bob }
+    Fixture {
+        env,
+        contract,
+        admin,
+        alice,
+        bob,
+    }
 }
 
 #[test]
@@ -45,7 +51,10 @@ fn root_admin_can_grant_any_role() {
 fn non_admin_cannot_grant_role() {
     let mut fx = setup();
     fx.env.set_caller(fx.alice); // alice holds nothing
-    let err = fx.contract.try_grant_role(roles::AGENT, fx.bob).unwrap_err();
+    let err = fx
+        .contract
+        .try_grant_role(roles::AGENT, fx.bob)
+        .unwrap_err();
     assert_eq!(err, Error::NotRoleAdmin.into());
     assert!(!fx.contract.has_role(roles::AGENT, fx.bob));
 }
@@ -66,7 +75,10 @@ fn non_admin_cannot_revoke() {
     fx.env.set_caller(fx.admin);
     fx.contract.grant_role(roles::AGENT, fx.alice);
     fx.env.set_caller(fx.bob);
-    let err = fx.contract.try_revoke_role(roles::AGENT, fx.alice).unwrap_err();
+    let err = fx
+        .contract
+        .try_revoke_role(roles::AGENT, fx.alice)
+        .unwrap_err();
     assert_eq!(err, Error::NotRoleAdmin.into());
     assert!(fx.contract.has_role(roles::AGENT, fx.alice));
 }
@@ -74,7 +86,10 @@ fn non_admin_cannot_revoke() {
 #[test]
 fn assert_role_reverts_for_non_holder() {
     let fx = setup();
-    let err = fx.contract.try_assert_role(roles::TREASURY, fx.alice).unwrap_err();
+    let err = fx
+        .contract
+        .try_assert_role(roles::TREASURY, fx.alice)
+        .unwrap_err();
     assert_eq!(err, Error::Unauthorized.into());
 }
 

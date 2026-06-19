@@ -55,7 +55,9 @@ fn guardian_pauses_real_vaults_desk_wide() {
     // Guardian over the registry; its deployer (treasury) holds GUARDIAN on it.
     let mut guardian = Guardian::deploy(
         &env,
-        GuardianInitArgs { registry: registry.contract_address() },
+        GuardianInitArgs {
+            registry: registry.contract_address(),
+        },
     );
 
     // Each vault wires the GUARDIAN role to the guardian contract so the
@@ -91,7 +93,9 @@ fn vault_rejects_pause_from_an_unwired_guardian() {
 
     let mut guardian = Guardian::deploy(
         &env,
-        GuardianInitArgs { registry: registry.contract_address() },
+        GuardianInitArgs {
+            registry: registry.contract_address(),
+        },
     );
 
     // NOTE: no set_guardian here. The fan-out calls pause() on the vault, which

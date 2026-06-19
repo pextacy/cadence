@@ -66,7 +66,8 @@ impl Guardian {
         let deployer = self.env().caller();
         self.registry.set(registry);
         self.paused.set(false);
-        self.ac.grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
+        self.ac
+            .grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
         self.ac.grant_unchecked(roles::GUARDIAN, deployer, deployer);
     }
 
@@ -112,7 +113,8 @@ impl Guardian {
         if new_guardian == caller {
             self.env().revert(Error::AlreadyInState);
         }
-        self.ac.grant_unchecked(roles::GUARDIAN, new_guardian, caller);
+        self.ac
+            .grant_unchecked(roles::GUARDIAN, new_guardian, caller);
         self.revoke_guardian(caller);
         self.env().emit_event(GuardianRotated {
             previous: caller,
@@ -204,9 +206,7 @@ impl Guardian {
         match (pausing, status) {
             (true, VaultStatus::Active) => true,
             (false, VaultStatus::Paused) => true,
-            (_, VaultStatus::Active)
-            | (_, VaultStatus::Paused)
-            | (_, VaultStatus::Closed) => false,
+            (_, VaultStatus::Active) | (_, VaultStatus::Paused) | (_, VaultStatus::Closed) => false,
         }
     }
 

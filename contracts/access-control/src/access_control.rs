@@ -68,7 +68,11 @@ impl AccessControl {
         self.assert_role_admin(role, caller);
         if self.has_role(role, who) {
             self.roles.set(&(role, who), false);
-            self.env().emit_event(RoleRevoked { role, account: who, sender: caller });
+            self.env().emit_event(RoleRevoked {
+                role,
+                account: who,
+                sender: caller,
+            });
         }
     }
 
@@ -79,7 +83,11 @@ impl AccessControl {
         let caller = self.env().caller();
         self.assert_role(role, caller);
         self.pending_role_transfer.set(&role, Some(to));
-        self.env().emit_event(RoleTransferStarted { role, to, sender: caller });
+        self.env().emit_event(RoleTransferStarted {
+            role,
+            to,
+            sender: caller,
+        });
     }
 
     /// Accept a pending two-step transfer of `role`. The caller MUST be the
@@ -102,7 +110,10 @@ impl AccessControl {
         }
         self.pending_role_transfer.set(&role, None);
         self.grant_unchecked(role, caller, caller);
-        self.env().emit_event(RoleTransferAccepted { role, account: caller });
+        self.env().emit_event(RoleTransferAccepted {
+            role,
+            account: caller,
+        });
     }
 
     /// Set the admin role for `role`. The caller MUST hold the CURRENT admin of
@@ -112,7 +123,11 @@ impl AccessControl {
         self.assert_role_admin(role, caller);
         let previous_admin = self.get_role_admin(role);
         self.role_admin.set(&role, new_admin);
-        self.env().emit_event(RoleAdminChanged { role, previous_admin, new_admin });
+        self.env().emit_event(RoleAdminChanged {
+            role,
+            previous_admin,
+            new_admin,
+        });
     }
 
     // ----- internal helpers -----
@@ -123,7 +138,11 @@ impl AccessControl {
     pub fn grant_unchecked(&mut self, role: Role, who: Address, sender: Address) {
         if !self.has_role(role, who) {
             self.roles.set(&(role, who), true);
-            self.env().emit_event(RoleGranted { role, account: who, sender });
+            self.env().emit_event(RoleGranted {
+                role,
+                account: who,
+                sender,
+            });
         }
     }
 
@@ -133,7 +152,11 @@ impl AccessControl {
     pub fn revoke_unchecked(&mut self, role: Role, who: Address, sender: Address) {
         if self.has_role(role, who) {
             self.roles.set(&(role, who), false);
-            self.env().emit_event(RoleRevoked { role, account: who, sender });
+            self.env().emit_event(RoleRevoked {
+                role,
+                account: who,
+                sender,
+            });
         }
     }
 

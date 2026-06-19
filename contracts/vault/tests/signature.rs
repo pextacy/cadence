@@ -69,7 +69,10 @@ fn happy_path_signature_verifies_at_init() {
     // supplies the treasury public key. If `init`'s on-chain verification did
     // not pass, deploy would revert and `deploy_with` would panic.
     let fx = deploy_with(U512::zero(), U512::zero());
-    assert_eq!(fx.contract.get_status(), cadence_vault::vault::Status::Funded);
+    assert_eq!(
+        fx.contract.get_status(),
+        cadence_vault::vault::Status::Funded
+    );
     // The stored nonce is the one bound into the verified preimage.
     assert_eq!(fx.contract.get_mandate_nonce(), nonce32());
 }

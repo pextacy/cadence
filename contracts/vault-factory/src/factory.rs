@@ -33,8 +33,10 @@ impl VaultFactory {
         self.count.set(0);
         self.registry.set(registry);
         self.vault_wasm_ref.set(vault_wasm_ref);
-        self.ac.grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
-        self.ac.grant_unchecked(roles::FACTORY_ADMIN, deployer, deployer);
+        self.ac
+            .grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
+        self.ac
+            .grant_unchecked(roles::FACTORY_ADMIN, deployer, deployer);
     }
 
     /// Sanction a new vault: record the intent, register it, emit init args.
@@ -91,8 +93,11 @@ impl VaultFactory {
 
         // Index the vault in the registry (cross-contract). The factory's own
         // address must hold FACTORY_ADMIN on the registry for this to succeed.
-        VaultRegistrationContractRef::new(self.env(), registry)
-            .register(vault, treasury, mandate_hash);
+        VaultRegistrationContractRef::new(self.env(), registry).register(
+            vault,
+            treasury,
+            mandate_hash,
+        );
 
         self.env().emit_event(VaultIntentRecorded {
             intent_id: id,
@@ -122,7 +127,10 @@ impl VaultFactory {
         }
         let previous = self.vault_wasm_ref.get();
         self.vault_wasm_ref.set(wasm_ref.clone());
-        self.env().emit_event(WasmUpdated { previous, current: wasm_ref });
+        self.env().emit_event(WasmUpdated {
+            previous,
+            current: wasm_ref,
+        });
     }
 
     // ----- views -----

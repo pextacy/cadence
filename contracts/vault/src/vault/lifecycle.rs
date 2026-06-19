@@ -98,7 +98,8 @@ impl ExecutionVault {
         // GUARDIAN, e.g. the desk Guardian contract, via `set_guardian`) and holds
         // TREASURY + GUARDIAN; the agent holds AGENT. Role checks run through the
         // composed AccessControl from here on.
-        self.ac.grant_unchecked(roles::ROOT_ADMIN, treasury, treasury);
+        self.ac
+            .grant_unchecked(roles::ROOT_ADMIN, treasury, treasury);
         self.ac.grant_unchecked(roles::TREASURY, treasury, treasury);
         self.ac.grant_unchecked(roles::AGENT, agent, treasury);
         self.ac.grant_unchecked(roles::GUARDIAN, treasury, treasury);

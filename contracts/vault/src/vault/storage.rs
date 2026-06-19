@@ -11,11 +11,11 @@ use odra::prelude::*;
 
 use cadence_access_control::{roles, AccessControl};
 
+use super::errors::Error;
 use super::events::{
     DecisionAttested, EmergencyWithdrawn, FillRecorded, MandateInitialised, MandateVerified,
     Settled, SliceExecuted, StatusChanged, VaultFunded,
 };
-use super::errors::Error;
 use super::status::Status;
 
 /// The Execution Vault.

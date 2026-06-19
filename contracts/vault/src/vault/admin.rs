@@ -55,7 +55,12 @@ impl ExecutionVault {
     /// Treasury configures the optional price-oracle cross-check: `execute_slice`
     /// will additionally require each slice's implied price to be within
     /// `max_deviation_bps` of the oracle's price for `pair`. Treasury-only.
-    pub(super) fn set_oracle_impl(&mut self, oracle: Address, pair: String, max_deviation_bps: u32) {
+    pub(super) fn set_oracle_impl(
+        &mut self,
+        oracle: Address,
+        pair: String,
+        max_deviation_bps: u32,
+    ) {
         self.assert_treasury();
         self.oracle.set(oracle);
         self.oracle_pair.set(pair);

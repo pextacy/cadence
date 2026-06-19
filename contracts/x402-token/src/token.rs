@@ -118,7 +118,11 @@ impl X402Token {
     pub fn approve(&mut self, spender: Address, amount: U256) {
         let owner = self.env().caller();
         self.allowances.set(&(owner, spender), amount);
-        self.env().emit_event(Approval { owner, spender, amount });
+        self.env().emit_event(Approval {
+            owner,
+            spender,
+            amount,
+        });
     }
 
     /// Transfer `amount` from `owner` to `recipient`, spending the caller's
@@ -190,13 +194,21 @@ impl X402Token {
             Ok(message) => message,
             Err(_) => self.env().revert(Error::SerializationError),
         };
-        if !self.env().verify_signature(&message, &signature, &public_key) {
+        if !self
+            .env()
+            .verify_signature(&message, &signature, &public_key)
+        {
             self.env().revert(Error::BadSignature);
         }
         // 5. spend the nonce and move the funds.
         self.used_authorizations.set(&nonce_key, true);
         self.do_transfer(from, to, value);
-        self.env().emit_event(AuthorizationUsed { from, to, amount: value, nonce });
+        self.env().emit_event(AuthorizationUsed {
+            from,
+            to,
+            amount: value,
+            nonce,
+        });
     }
 
     // ----- internal helpers (private — never exposed as entrypoints) -----
@@ -276,7 +288,13 @@ mod tests {
         );
         // Provision the payer with a balance to authorize against.
         token.transfer(payer, U256::from(PAYER_BALANCE));
-        Fixture { env, token, payer, relayer, merchant }
+        Fixture {
+            env,
+            token,
+            payer,
+            relayer,
+            merchant,
+        }
     }
 
     /// Reconstruct the exact preimage the contract signs over, off-chain.
@@ -310,7 +328,15 @@ mod tests {
         nonce: &Bytes,
     ) -> (PublicKey, Bytes) {
         let token_addr = fx.token.address();
-        let msg = auth_message(&token_addr, fx.payer, to, value, valid_after, valid_before, nonce);
+        let msg = auth_message(
+            &token_addr,
+            fx.payer,
+            to,
+            value,
+            valid_after,
+            valid_before,
+            nonce,
+        );
         let sig = fx.env.sign_message(&msg, &fx.payer);
         let pk = fx.env.public_key(&fx.payer);
         (pk, sig)
@@ -327,11 +353,21 @@ mod tests {
         // A third party (the relayer) submits it; the payer spends no gas.
         fx.env.set_caller(fx.relayer);
         fx.token.transfer_with_authorization(
-            fx.payer, fx.merchant, value, WINDOW_START, WINDOW_END, nonce.clone(), pk, sig,
+            fx.payer,
+            fx.merchant,
+            value,
+            WINDOW_START,
+            WINDOW_END,
+            nonce.clone(),
+            pk,
+            sig,
         );
 
         assert_eq!(fx.token.balance_of(fx.merchant), value);
-        assert_eq!(fx.token.balance_of(fx.payer), U256::from(PAYER_BALANCE) - value);
+        assert_eq!(
+            fx.token.balance_of(fx.payer),
+            U256::from(PAYER_BALANCE) - value
+        );
         assert!(fx.token.authorization_used(fx.payer, nonce));
     }
 
@@ -344,12 +380,26 @@ mod tests {
         let (pk, sig) = sign_auth(&fx, fx.merchant, value, WINDOW_START, WINDOW_END, &nonce);
         fx.env.set_caller(fx.relayer);
         fx.token.transfer_with_authorization(
-            fx.payer, fx.merchant, value, WINDOW_START, WINDOW_END, nonce.clone(), pk.clone(), sig.clone(),
+            fx.payer,
+            fx.merchant,
+            value,
+            WINDOW_START,
+            WINDOW_END,
+            nonce.clone(),
+            pk.clone(),
+            sig.clone(),
         );
         let err = fx
             .token
             .try_transfer_with_authorization(
-                fx.payer, fx.merchant, value, WINDOW_START, WINDOW_END, nonce, pk, sig,
+                fx.payer,
+                fx.merchant,
+                value,
+                WINDOW_START,
+                WINDOW_END,
+                nonce,
+                pk,
+                sig,
             )
             .unwrap_err();
         assert_eq!(err, Error::AuthorizationAlreadyUsed.into());
@@ -361,13 +411,27 @@ mod tests {
         fx.env.advance_block_time(WINDOW_START + 10);
         let nonce = Bytes::from(vec![2u8; 32]);
         let signed_value = U256::from(10_000u64);
-        let (pk, sig) = sign_auth(&fx, fx.merchant, signed_value, WINDOW_START, WINDOW_END, &nonce);
+        let (pk, sig) = sign_auth(
+            &fx,
+            fx.merchant,
+            signed_value,
+            WINDOW_START,
+            WINDOW_END,
+            &nonce,
+        );
         // Submit a larger value than was signed → signature no longer matches.
         fx.env.set_caller(fx.relayer);
         let err = fx
             .token
             .try_transfer_with_authorization(
-                fx.payer, fx.merchant, U256::from(20_000u64), WINDOW_START, WINDOW_END, nonce, pk, sig,
+                fx.payer,
+                fx.merchant,
+                U256::from(20_000u64),
+                WINDOW_START,
+                WINDOW_END,
+                nonce,
+                pk,
+                sig,
             )
             .unwrap_err();
         assert_eq!(err, Error::BadSignature.into());
@@ -384,7 +448,14 @@ mod tests {
         let err = fx
             .token
             .try_transfer_with_authorization(
-                fx.payer, fx.merchant, value, WINDOW_START, WINDOW_END, nonce, pk, sig,
+                fx.payer,
+                fx.merchant,
+                value,
+                WINDOW_START,
+                WINDOW_END,
+                nonce,
+                pk,
+                sig,
             )
             .unwrap_err();
         assert_eq!(err, Error::AuthorizationExpired.into());
@@ -402,7 +473,14 @@ mod tests {
         let err = fx
             .token
             .try_transfer_with_authorization(
-                fx.merchant, fx.merchant, value, WINDOW_START, WINDOW_END, nonce, pk, sig,
+                fx.merchant,
+                fx.merchant,
+                value,
+                WINDOW_START,
+                WINDOW_END,
+                nonce,
+                pk,
+                sig,
             )
             .unwrap_err();
         assert_eq!(err, Error::NotAuthorizedSigner.into());

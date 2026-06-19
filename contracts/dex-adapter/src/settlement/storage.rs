@@ -5,7 +5,6 @@ use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::U512;
 use odra::prelude::*;
 
-use super::errors::Error;
 use super::events::{SettlementRecorded, SwapIntent};
 
 /// One escrowed slice awaiting off-chain settlement.
@@ -19,7 +18,7 @@ pub struct Escrow {
 }
 
 /// Escrow + attested-settlement adapter for off-chain venues.
-#[odra::module(events = [SwapIntent, SettlementRecorded], errors = Error)]
+#[odra::module(events = [SwapIntent, SettlementRecorded], errors = super::errors::Error)]
 pub struct SettlementAdapter {
     /// Stable venue id this adapter settles for (e.g. `"cspr.trade"`).
     pub(super) venue_id: Var<String>,

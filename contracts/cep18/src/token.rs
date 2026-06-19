@@ -106,7 +106,11 @@ impl Cep18 {
     pub fn approve(&mut self, spender: Address, amount: U256) {
         let owner = self.env().caller();
         self.allowances.set(&(owner, spender), amount);
-        self.env().emit_event(Approval { owner, spender, amount });
+        self.env().emit_event(Approval {
+            owner,
+            spender,
+            amount,
+        });
     }
 
     /// Transfer `amount` from `owner` to `recipient`, spending the caller's
@@ -215,7 +219,9 @@ mod tests {
         let (env, mut token) = setup();
         let bob = env.get_account(1);
         env.set_caller(bob); // bob holds nothing
-        let err = token.try_transfer(env.get_account(0), U256::from(1u64)).unwrap_err();
+        let err = token
+            .try_transfer(env.get_account(0), U256::from(1u64))
+            .unwrap_err();
         assert_eq!(err, Error::InsufficientBalance.into());
     }
 

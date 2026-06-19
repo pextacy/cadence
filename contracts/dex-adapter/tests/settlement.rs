@@ -256,8 +256,7 @@ fn rejects_wrong_signer() {
     let settlement_ref = Bytes::from(b"ref".to_vec());
     let bought = U512::from(199_000u64);
     let addr = fx.adapter.address();
-    let msg =
-        settlement_message(&addr, 0, bought, &settlement_ref, &nonce, &fx.recipient).unwrap();
+    let msg = settlement_message(&addr, 0, bought, &settlement_ref, &nonce, &fx.recipient).unwrap();
     // Sign with a non-operator account.
     let sig = fx.env.sign_message(&msg, &fx.recipient);
     let pk = fx.env.public_key(&fx.recipient);

@@ -6,8 +6,6 @@
 
 use odra::prelude::*;
 
-use super::errors::AggregatorError;
-
 /// Emitted at `init` recording the configured source set and quorum. A single
 /// event, co-located with the storage it describes (no standalone events file).
 #[odra::event]
@@ -18,7 +16,7 @@ pub struct AggregatorConfigured {
 }
 
 /// Stored configuration for the aggregator.
-#[odra::module(events = [AggregatorConfigured], errors = AggregatorError)]
+#[odra::module(events = [AggregatorConfigured], errors = super::errors::AggregatorError)]
 pub struct AggregatorStorage {
     /// The configured source oracle addresses (each an `OracleAdapter`).
     pub sources: List<Address>,

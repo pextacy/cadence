@@ -71,8 +71,10 @@ impl VaultRegistry {
     pub fn init(&mut self) {
         let deployer = self.env().caller();
         self.count.set(0);
-        self.ac.grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
-        self.ac.grant_unchecked(roles::FACTORY_ADMIN, deployer, deployer);
+        self.ac
+            .grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
+        self.ac
+            .grant_unchecked(roles::FACTORY_ADMIN, deployer, deployer);
     }
 
     /// Index a freshly deployed vault and return its assigned registry id.
@@ -80,12 +82,7 @@ impl VaultRegistry {
     /// Caller MUST hold [`roles::FACTORY_ADMIN`]. Reverts
     /// [`Error::AlreadyRegistered`] if `vault` is already indexed and
     /// [`Error::Overflow`] if the id counter would wrap.
-    pub fn register(
-        &mut self,
-        vault: Address,
-        treasury: Address,
-        mandate_hash: [u8; 32],
-    ) -> u64 {
+    pub fn register(&mut self, vault: Address, treasury: Address, mandate_hash: [u8; 32]) -> u64 {
         self.assert_writer();
         if self.vault_ids.get(&vault).flatten().is_some() {
             self.env().revert(Error::AlreadyRegistered);
@@ -114,7 +111,12 @@ impl VaultRegistry {
         owned.push(id);
         self.by_treasury_index.set(&treasury, owned);
 
-        self.env().emit_event(VaultRegistered { id, vault, treasury, mandate_hash });
+        self.env().emit_event(VaultRegistered {
+            id,
+            vault,
+            treasury,
+            mandate_hash,
+        });
         id
     }
 
@@ -135,9 +137,16 @@ impl VaultRegistry {
         }
 
         let previous = record.status;
-        let updated = VaultRecord { status: status.clone(), ..record };
+        let updated = VaultRecord {
+            status: status.clone(),
+            ..record
+        };
         self.vaults.set(&id, updated);
-        self.env().emit_event(VaultStatusChanged { id, previous, current: status });
+        self.env().emit_event(VaultStatusChanged {
+            id,
+            previous,
+            current: status,
+        });
     }
 
     /// Fetch a record by registry id, or `None` if unknown.

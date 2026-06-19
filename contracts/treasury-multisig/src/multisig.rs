@@ -100,7 +100,11 @@ impl TreasuryMultisig {
         self.proposals.set(&id, proposal);
         self.count.set(next);
 
-        self.env().emit_event(ProposalCreated { id, proposer, action_hash });
+        self.env().emit_event(ProposalCreated {
+            id,
+            proposer,
+            action_hash,
+        });
         id
     }
 
@@ -122,8 +126,18 @@ impl TreasuryMultisig {
         };
 
         self.approvals.set(&(id, owner), true);
-        self.proposals.set(&id, Proposal { approvals, ..proposal });
-        self.env().emit_event(Approved { id, owner, approvals });
+        self.proposals.set(
+            &id,
+            Proposal {
+                approvals,
+                ..proposal
+            },
+        );
+        self.env().emit_event(Approved {
+            id,
+            owner,
+            approvals,
+        });
     }
 
     /// Withdraw the caller's previously cast approval of proposal `id`.
@@ -143,8 +157,18 @@ impl TreasuryMultisig {
         let approvals = proposal.approvals.saturating_sub(1);
 
         self.approvals.set(&(id, owner), false);
-        self.proposals.set(&id, Proposal { approvals, ..proposal });
-        self.env().emit_event(Revoked { id, owner, approvals });
+        self.proposals.set(
+            &id,
+            Proposal {
+                approvals,
+                ..proposal
+            },
+        );
+        self.env().emit_event(Revoked {
+            id,
+            owner,
+            approvals,
+        });
     }
 
     /// Execute proposal `id` once its distinct approvals reach `threshold`.
@@ -167,9 +191,16 @@ impl TreasuryMultisig {
         let approvals = proposal.approvals;
         self.proposals.set(
             &id,
-            Proposal { status: ProposalStatus::Executed, ..proposal },
+            Proposal {
+                status: ProposalStatus::Executed,
+                ..proposal
+            },
         );
-        self.env().emit_event(Executed { id, action_hash, approvals });
+        self.env().emit_event(Executed {
+            id,
+            action_hash,
+            approvals,
+        });
     }
 
     // ----- read-only views -----

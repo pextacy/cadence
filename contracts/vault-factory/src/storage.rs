@@ -1,7 +1,6 @@
 //! Persistent state for the [`VaultFactory`](crate::factory::VaultFactory): the
 //! per-request intent record and the module's storage layout.
 
-use crate::errors::Error;
 use crate::events::{VaultDeployed, VaultIntentRecorded, WasmUpdated};
 use cadence_access_control::AccessControl;
 use odra::casper_types::bytesrepr::Bytes;
@@ -37,7 +36,7 @@ pub struct VaultIntent {
 /// for why this records intent + emits init args rather than instantiating on-chain.
 #[odra::module(
     events = [VaultIntentRecorded, VaultDeployed, WasmUpdated],
-    errors = Error
+    errors = crate::errors::Error
 )]
 pub struct VaultFactory {
     /// Shared RBAC sub-module gating all writes (`FACTORY_ADMIN`).

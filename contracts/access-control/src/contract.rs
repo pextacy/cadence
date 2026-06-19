@@ -29,7 +29,8 @@ impl AccessControlContract {
     /// administrative footing.
     pub fn init(&mut self) {
         let deployer = self.env().caller();
-        self.ac.grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
+        self.ac
+            .grant_unchecked(roles::ROOT_ADMIN, deployer, deployer);
         self.ac.grant_unchecked(roles::TREASURY, deployer, deployer);
         self.ac.grant_unchecked(roles::GUARDIAN, deployer, deployer);
     }

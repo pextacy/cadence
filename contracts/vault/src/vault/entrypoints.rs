@@ -111,7 +111,8 @@ impl ExecutionVault {
 
     /// Whether `who` holds the GUARDIAN role.
     pub fn is_guardian(&self, who: Address) -> bool {
-        self.ac.has_role(cadence_access_control::roles::GUARDIAN, who)
+        self.ac
+            .has_role(cadence_access_control::roles::GUARDIAN, who)
     }
 
     /// Treasury opts a venue into cross-contract `VenueAdapter` settlement (vs the
