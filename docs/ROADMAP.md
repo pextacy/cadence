@@ -16,11 +16,11 @@ starts.
 | 0 | `cadence-common` shared math | ✅ Done |
 | 1 | Decompose every crate by concern + golden-vector preimage tests | ✅ Done |
 | 2a | Compose `AccessControl` into the vault (RBAC + `set_guardian`) | ✅ Done |
-| **2b** | **Route `execute_slice` through `VenueAdapter`; wire fees** | ⏳ Pending |
+| 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (fees + escrow-attestation path remain) |
 | **3** | **Guardian desk-wide pause fan-out (cross-contract wiring)** | 🟡 Contracts built; cross-contract wiring/tests pending |
 | **4** | **`VaultFactory` + `VaultRegistry` end-to-end create/register flow** | 🟡 Contracts built; deploy-flow integration pending |
 | **5** | **`TreasuryMultisig` gating + `OracleAggregator` band cross-check** | 🟡 Contracts built; integration pending |
-| **6** | **Wire the agent `loop.ts` to persistence/finality/observability** | ⏳ Pending |
+| 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (on-chain reconciliation + finality-gating remain) |
 | X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | ⏳ Pending |
 
 Legend: ✅ done · 🟡 components exist & unit-tested but not yet integrated across
@@ -43,6 +43,19 @@ contracts · ⏳ not started.
   but keeps the vault's own error codes. `pause`/`resume` accept a GUARDIAN; a
   treasury-only `set_guardian` wires the role. `init` signature and preimage
   unchanged.
+- **Wave 2b** — `execute_slice` settles cross-contract through the `VenueAdapter`
+  (`VenueAdapterContractRef::swap` with attached value) for venues opted in via a
+  treasury-only `set_venue_adapter`; an atomic `SwapReceipt` records the fill in
+  the same call. Backward compatible (direct transfer stays the default).
+  `tests/integration_adapter.rs` proves end-to-end atomic settlement to the
+  treasury. Found+fixed an Odra by-name cross-contract dispatch bug (adapter param
+  names must match the trait). *Remaining:* fee accrual on fill + the
+  escrow/signed-attestation path for off-chain (cspr.trade) venues.
+- **Wave 6** — `runAgent` uses the ops layer: `FileStateStore` snapshots per tick
+  + resume-on-restart, `InProcessMetrics` counters, a hash-chained `FileAuditLog`,
+  an opt-in `HealthServer` (`HEALTH_PORT`), and `InProcessNonceManager`
+  serialisation. *Remaining:* on-chain state reconciliation on boot and
+  finality-gating in the executor (both behind the existing modules).
 
 Current footprint: 13 deployable contracts, ~230 `cargo` tests, 13 wasm artifacts;
 agent at 167 TS tests. All green on `main`.
