@@ -1,5 +1,10 @@
 //! Events emitted across the vault lifecycle.
 
+// `#[odra::event]` generates a constructor with one parameter per field, so the
+// 9-field MandateInitialised trips clippy's argument-count lint on macro-generated
+// code. The field set mirrors the audited event surface and is not ours to split.
+#![allow(clippy::too_many_arguments)]
+
 use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::U512;
 use odra::prelude::*;
