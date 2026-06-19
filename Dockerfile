@@ -3,8 +3,8 @@
 # The agent (@cadence/agent) depends on the @cadence/mandate workspace, so the
 # builder installs the full npm workspace tree and builds mandate before agent.
 # The runtime stage ships only the compiled JS + production node_modules and runs
-# as a non-root user. The container entrypoint fails fast via the agent's env
-# preflight (validateAgentEnv) before the loop starts.
+# as a non-root user. The container entrypoint fails fast: runAgent/runPortfolio
+# call loadConfig() (zod-validated env) as their first step, before the loop starts.
 
 # -----------------------------------------------------------------------------
 # Stage 1: builder
@@ -61,6 +61,7 @@ USER cadence
 # Health endpoint exposed by the agent's ops/health-server (default port).
 EXPOSE 8080
 
-# index.js runs validateAgentEnv() (preflight) before dispatching the loop, so a
-# missing/invalid env var exits non-zero with a single structured log line.
+# index.js dispatches runAgent/runPortfolio, which call loadConfig() (zod env
+# validation) before the loop starts, so a missing/invalid env var exits non-zero
+# with a single structured log line.
 CMD ["node", "agent/dist/index.js"]

@@ -20,7 +20,7 @@ starts.
 | 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (idempotent-pause robustness remains) |
 | 4 | `VaultFactory` + `VaultRegistry` create/register flow | ✅ Contracts done+tested (deploy-script call is testnet-gated) |
 | 5 | `OracleAggregator` band cross-check + `TreasuryMultisig` | ✅ Oracle cross-check done; multisig contract done, gating is a design choice |
-| 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (on-chain reconciliation + finality-gating remain) |
+| 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (incl. on-chain startup reconciliation + finality-gating) |
 | X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | ⏳ Pending |
 
 Legend: ✅ done · 🟡 components exist & unit-tested but not yet integrated across
@@ -172,7 +172,9 @@ band cross-check is optional and does not break venues that run without an oracl
 ## Wave 6 — Agent loop integration (TypeScript)
 
 The persistence/finality/nonce/observability subsystems exist and are tested
-(167 TS tests) but **`loop.ts` does not call them yet**. Exact call sites:
+(182 TS tests) and **`loop.ts` now wires them all**, including on-chain startup
+reconciliation (`resolveStartupState`) and executor finality-gating. Call sites
+as implemented:
 
 - **`agent/src/loop.ts`:** construct `FileStateStore(defaultStateDir())`,
   `InProcessNonceManager(await store.highWaterSeq())`, `RpcConfirmationService`,
@@ -189,11 +191,13 @@ The persistence/finality/nonce/observability subsystems exist and are tested
 - **`agent/src/clients/vault.ts`:** optionally share one `RpcClient` with the
   `ConfirmationService`; add role-aware reads as needed. No breaking change.
 
-**Note:** authoritative `state` (soldSoFar/boughtSoFar) should come from on-chain
-**reconciliation** (`state/reconcile.ts::reconcileTrack`), not local disk — local
-snapshots resume only operational heuristics (breaker/price history). Finality
-gating slows the loop intentionally; keep it behind a config flag (optimistic
-default for demo, finality-gated for production).
+**Note:** authoritative `state` (soldSoFar/boughtSoFar) comes from on-chain
+**reconciliation** (`state/reconcile.ts::resolveStartupState`, which reads the
+vault on chain and fails closed if the read fails while prior progress exists),
+not local disk — local snapshots resume only operational heuristics
+(breaker/price history). Finality gating slows the loop intentionally; it is
+always on (fail-safe per CLAUDE.md §6) rather than behind an optimistic flag —
+the executor never advances on an unconfirmed slice or swap.
 
 **Green gate:** agent `typecheck` + `test` green; new tests cover resume-from-
 snapshot, fill blocked on unconfirmed swap, and nonce serialization across tracks.
@@ -202,11 +206,14 @@ snapshot, fill blocked on unconfirmed swap, and nonce serialization across track
 
 ## Cross-cutting (parallel to the waves)
 
-- **Clippy-clean:** the workflow-generated crates emit a few `unused import`
-  warnings; CI runs `cargo clippy -D warnings`, so clear them before the first
-  `main` CI run is expected green.
-- **CI/release:** pin `dtolnay/rust-toolchain` off `@master` to a SHA; confirm the
-  Docker prod-prune resolves `@cadence/mandate` at runtime.
+- **Clippy-clean:** ✅ done. `cargo clippy -D warnings` is green and the
+  `build-wasm.sh` lowering is warning-free — the `errors = Error` attributes that
+  went `unused` under the wasm build cfg now reference the error type by full path
+  (no standalone `use`), so no crate emits an unused-import warning.
+- **CI/release:** ✅ `dtolnay/rust-toolchain` is pinned to a SHA (not `@master`).
+  The Docker prod-prune resolves `@cadence/mandate` via the workspace symlink
+  (runtime copies `mandate/dist` + manifest); full verification still wants a real
+  `docker build`.
 - **Deploy safety / E2E:** finality polling + deployment manifest land in
   `scripts` (done); add the Playwright E2E over the dashboard CreateMandate→sign
   flow and a testnet smoke once the contract surface settles.

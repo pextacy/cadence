@@ -65,7 +65,9 @@ jobs:
         run: echo "channel=$(tr -d '[:space:]' < rust-toolchain)" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain (pinned)
-        uses: dtolnay/rust-toolchain@master
+        # Pinned to a SHA (master HEAD as of 2026-06-20) rather than @master so a
+        # force-push to the action's branch can't silently change our toolchain.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
           components: rustfmt, clippy
