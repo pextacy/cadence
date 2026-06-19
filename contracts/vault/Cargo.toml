@@ -11,6 +11,8 @@ cadence_dex_adapter = { path = "../dex-adapter", default-features = false }
 
 [dev-dependencies]
 odra-test = { workspace = true }
+cadence-guardian = { path = "../guardian", default-features = false }
+cadence-vault-registry = { path = "../vault-registry", default-features = false }
 
 [build-dependencies]
 odra-build = { workspace = true }

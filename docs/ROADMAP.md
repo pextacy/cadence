@@ -17,7 +17,7 @@ starts.
 | 1 | Decompose every crate by concern + golden-vector preimage tests | ✅ Done |
 | 2a | Compose `AccessControl` into the vault (RBAC + `set_guardian`) | ✅ Done |
 | 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (fees + escrow-attestation path remain) |
-| **3** | **Guardian desk-wide pause fan-out (cross-contract wiring)** | 🟡 Contracts built; cross-contract wiring/tests pending |
+| 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (idempotent-pause robustness remains) |
 | **4** | **`VaultFactory` + `VaultRegistry` end-to-end create/register flow** | 🟡 Contracts built; deploy-flow integration pending |
 | **5** | **`TreasuryMultisig` gating + `OracleAggregator` band cross-check** | 🟡 Contracts built; integration pending |
 | 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (on-chain reconciliation + finality-gating remain) |
@@ -104,23 +104,21 @@ pass; `ExecutionVault.wasm` within Casper install limits.
 
 ---
 
-## Wave 3 — Guardian desk-wide pause (cross-contract wiring)
+## Wave 3 — Guardian desk-wide pause (cross-contract wiring) — DONE
 
-**Built:** `guardian` crate (`global_pause`/`global_resume`, paginated fan-out, a
-`VaultControl` external trait) and the vault now accepts a GUARDIAN (Wave 2a
-`set_guardian`).
+`vault/tests/integration_guardian.rs` deploys a registry + two **real**
+`ExecutionVault`s, funds them Active, registers them, `set_guardian`s each to the
+guardian contract, and proves one `global_pause` fans out a cross-contract
+`pause()` to both. A negative test proves an unwired guardian cannot pause (the
+fan-out reverts), confirming the GUARDIAN-role authorization is load-bearing. The
+`VaultControl` trait (`pause`/`resume`, no args) matches the vault's entrypoints.
 
-**Remaining:**
-1. Ensure the vault's `pause`/`resume`/`status` surface matches the `VaultControl`
-   trait the guardian calls (signatures + entrypoint names line up for the
-   generated `VaultControlContractRef`).
-2. Integration test: deploy a registry + ≥2 real `ExecutionVault`s, `set_guardian`
-   each to the guardian contract, then one `global_pause` pauses all of them.
-3. Bound/paginate the fan-out (already designed) and tolerate already-paused
-   vaults (idempotent pause).
-
-**Green gate:** `guardian/tests` exercises fan-out against real vaults (not just
-mock vaults), proving a single call pauses the desk.
+**Remaining (robustness):** the real vault's `pause` reverts (`NotActive`) if a
+vault is already paused, while the guardian's `VaultControl` contract *assumes*
+idempotent pause. A fan-out whose registry says `Active` but whose vault is
+actually `Paused` would revert the whole sweep. Fix options: make the vault's
+`pause` idempotent (no-op when already `Paused`), or have the guardian read live
+vault status / tolerate per-vault reverts. Out of scope for the happy-path proof.
 
 ---
 
