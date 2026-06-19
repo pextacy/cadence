@@ -10,6 +10,7 @@ cadence-vault-registry = { path = "../vault-registry", default-features = false 
 
 [dev-dependencies]
 odra-test = { workspace = true }
+cadence_vault = { path = "../vault", default-features = false }
 
 [build-dependencies]
 odra-build = { workspace = true }

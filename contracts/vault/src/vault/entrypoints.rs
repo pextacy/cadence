@@ -120,6 +120,12 @@ impl ExecutionVault {
         self.set_venue_adapter_impl(venue, is_adapter)
     }
 
+    /// Treasury wires the optional oracle price cross-check (oracle address, the
+    /// price-pair key, and the max permitted deviation in bps).
+    pub fn set_oracle(&mut self, oracle: Address, pair: String, tolerance_bps: u32) {
+        self.set_oracle_impl(oracle, pair, tolerance_bps)
+    }
+
     pub fn get_status(&self) -> Status {
         self.get_status_impl()
     }

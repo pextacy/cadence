@@ -13,23 +13,40 @@ use super::storage::ExecutionVault;
 impl ExecutionVault {
     /// Circuit-breaker: pause execution. Agent, treasury, or GUARDIAN may call
     /// (the GUARDIAN role lets the desk-wide Guardian contract pause this vault).
+    ///
+    /// **Idempotent** by contract: pausing an already-`Paused` vault is a no-op
+    /// (returns normally, no event), never a revert. This is required by the
+    /// `VaultControl` trait the desk-wide Guardian fans out through, so a global
+    /// sweep that re-covers a vault an earlier batch (or the agent) already paused
+    /// does not abort mid-sweep. A vault that is not running (`Funded`/terminal)
+    /// still reverts `NotActive`.
     pub(super) fn pause_impl(&mut self) {
         self.assert_can_pause();
-        if self.read_status() != Status::Active {
-            self.env().revert(Error::NotActive);
+        match self.read_status() {
+            Status::Paused => {} // idempotent no-op
+            Status::Active => {
+                self.status.set(Status::Paused);
+                self.env().emit_event(StatusChanged { paused: true });
+            }
+            _ => self.env().revert(Error::NotActive),
         }
-        self.status.set(Status::Paused);
-        self.env().emit_event(StatusChanged { paused: true });
     }
 
     /// Resume after a pause. Agent, treasury, or GUARDIAN may call.
+    ///
+    /// **Idempotent** mirror of [`Self::pause_impl`]: resuming an already-`Active`
+    /// vault is a no-op (the `VaultControl` resume contract), while a terminal or
+    /// unfunded vault reverts `NotActive`.
     pub(super) fn resume_impl(&mut self) {
         self.assert_can_pause();
-        if self.read_status() != Status::Paused {
-            self.env().revert(Error::NotActive);
+        match self.read_status() {
+            Status::Active => {} // idempotent no-op
+            Status::Paused => {
+                self.status.set(Status::Active);
+                self.env().emit_event(StatusChanged { paused: false });
+            }
+            _ => self.env().revert(Error::NotActive),
         }
-        self.status.set(Status::Active);
-        self.env().emit_event(StatusChanged { paused: false });
     }
 
     /// Treasury wires (or rotates) the GUARDIAN role to `guardian` — typically the
@@ -50,6 +67,20 @@ impl ExecutionVault {
             self.env().revert(Error::VenueNotAllowed);
         }
         self.venue_is_adapter.set(&venue, is_adapter);
+    }
+
+    /// Treasury wires the optional price-oracle cross-check. `oracle` is a
+    /// `SignedPriceOracle` or `OracleAggregator` address; `pair` is the price key
+    /// that oracle is configured under; `tolerance_bps` is the maximum permitted
+    /// deviation of a slice's implied price from the oracle price. Treasury-only.
+    pub(super) fn set_oracle_impl(&mut self, oracle: Address, pair: String, tolerance_bps: u32) {
+        self.assert_treasury();
+        if u64::from(tolerance_bps) > super::constants::BPS_DENOMINATOR {
+            self.env().revert(Error::OracleBandBreach);
+        }
+        self.oracle.set(oracle);
+        self.oracle_pair.set(pair);
+        self.oracle_tolerance_bps.set(tolerance_bps);
     }
 
     /// Emergency drain. **Treasury only**, and only while the vault is `Paused`.

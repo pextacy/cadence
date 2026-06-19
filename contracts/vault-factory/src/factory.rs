@@ -10,8 +10,9 @@ use crate::errors::Error;
 use crate::events::{VaultDeployed, VaultIntentRecorded, WasmUpdated};
 use crate::storage::{VaultFactory, VaultIntent};
 use cadence_access_control::roles;
+use cadence_treasury_multisig::multisig::MultisigGateContractRef;
 use cadence_vault_registry::registry::VaultRegistrationContractRef;
-use odra::casper_types::bytesrepr::Bytes;
+use odra::casper_types::bytesrepr::{Bytes, ToBytes};
 use odra::prelude::*;
 use odra::ContractRef;
 
@@ -61,6 +62,15 @@ impl VaultFactory {
     ) -> u64 {
         self.assert_admin();
         self.validate_create(vault, treasury, agent);
+
+        // Optional governance gate: when a multisig is wired, this exact action
+        // (vault, treasury, agent, mandate) MUST have cleared an M-of-N approval.
+        if let Some(multisig) = self.multisig.get() {
+            let action_hash = self.create_action_hash(vault, treasury, agent, mandate_hash);
+            if !MultisigGateContractRef::new(self.env(), multisig).is_action_executed(action_hash) {
+                self.env().revert(Error::MultisigNotAuthorized);
+            }
+        }
 
         let wasm_ref = self
             .vault_wasm_ref
@@ -125,11 +135,42 @@ impl VaultFactory {
         self.env().emit_event(WasmUpdated { previous, current: wasm_ref });
     }
 
+    /// Wire (or clear by re-wiring) the treasury multisig gate. Caller MUST hold
+    /// [`roles::FACTORY_ADMIN`]. Once set, every `create_vault` requires a matching
+    /// executed multisig action. The deployer wires this to the desk's multisig.
+    pub fn set_multisig(&mut self, multisig: Address) {
+        self.assert_admin();
+        self.multisig.set(multisig);
+    }
+
+    /// The canonical action hash for a `create_vault` request — the value an owner
+    /// proposes in the multisig so the executed action authorises exactly this call.
+    /// blake2b over `vault || treasury || agent || mandate_hash` (Casper ToBytes).
+    pub fn create_action_hash(
+        &self,
+        vault: Address,
+        treasury: Address,
+        agent: Address,
+        mandate_hash: [u8; 32],
+    ) -> [u8; 32] {
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(&vault.to_bytes().unwrap_or_default());
+        buf.extend_from_slice(&treasury.to_bytes().unwrap_or_default());
+        buf.extend_from_slice(&agent.to_bytes().unwrap_or_default());
+        buf.extend_from_slice(&mandate_hash);
+        self.env().hash(buf.as_slice())
+    }
+
     // ----- views -----
 
     /// The registry address vaults are registered in.
     pub fn registry(&self) -> Option<Address> {
         self.registry.get()
+    }
+
+    /// The wired treasury multisig gate, if any.
+    pub fn multisig(&self) -> Option<Address> {
+        self.multisig.get()
     }
 
     /// The configured vault package-hash (stored wasm reference), if any.

@@ -2,8 +2,15 @@ import type { Mandate, Strategy } from "@cadence/mandate";
 
 export type { Mandate, Strategy };
 
-/** Vault lifecycle status, mirroring the on-chain `Status` enum. */
-export type VaultStatus = "Funded" | "Active" | "Paused" | "Completed" | "Expired";
+/** Vault lifecycle status, mirroring the on-chain `Status` enum (discriminant
+ * order: Funded, Active, Paused, Completed, Expired, Halted). */
+export type VaultStatus =
+  | "Funded"
+  | "Active"
+  | "Paused"
+  | "Completed"
+  | "Expired"
+  | "Halted";
 
 /**
  * The mandate limits in the runtime representation used by the executor and the

@@ -5,6 +5,7 @@
 //! tests deploy both contracts and grant the factory's address the registry writer
 //! role so the cross-contract `register` call succeeds.
 
+use cadence_treasury_multisig::multisig::{TreasuryMultisig, TreasuryMultisigInitArgs};
 use cadence_vault_factory::errors::Error;
 use cadence_vault_factory::factory::{VaultFactoryHostRef, VaultFactoryInitArgs};
 use cadence_vault_factory::storage::VaultFactory;
@@ -127,6 +128,73 @@ fn create_vault_registers_in_registry() {
     assert_eq!(record.vault, fx.vault_1);
     assert_eq!(record.treasury, fx.treasury);
     assert_eq!(record.mandate_hash, mandate(7));
+}
+
+#[test]
+fn factory_flow_is_enumerable_and_reverse_indexed_by_treasury() {
+    // End-to-end Wave 4: two vaults created through the factory for one treasury
+    // are both indexed in the registry, enumerable, and reverse-indexed by owner —
+    // exactly what the registry-driven deploy flow reads back.
+    let mut fx = setup();
+    fx.factory
+        .create_vault(fx.vault_1, fx.treasury, fx.agent, mandate(11));
+    fx.factory
+        .create_vault(fx.vault_2, fx.treasury, fx.agent, mandate(12));
+
+    // Forward enumeration returns both records in id order.
+    let page = fx.registry.enumerate(0, 16);
+    assert_eq!(page.len(), 2);
+    assert_eq!(page[0].vault, fx.vault_1);
+    assert_eq!(page[1].vault, fx.vault_2);
+
+    // Reverse index groups both vaults under their shared treasury.
+    assert_eq!(fx.registry.by_treasury(fx.treasury), vec![0, 1]);
+    assert!(fx.registry.by_treasury(fx.outsider).is_empty());
+}
+
+#[test]
+fn multisig_gate_blocks_create_until_action_is_executed() {
+    // Wave 5: with a treasury multisig wired, create_vault must not run until the
+    // exact action (vault, treasury, agent, mandate) has cleared an M-of-N approval.
+    let mut fx = setup();
+
+    // 1-of-1 multisig owned by the admin, wired into the factory.
+    fx.env.set_caller(fx.admin);
+    let mut multisig = TreasuryMultisig::deploy(
+        &fx.env,
+        TreasuryMultisigInitArgs { owners: vec![fx.admin], threshold: 1 },
+    );
+    fx.factory.set_multisig(multisig.address());
+    assert_eq!(fx.factory.multisig(), Some(multisig.address()));
+
+    // Without an executed proposal the gate rejects the call.
+    let blocked = fx
+        .factory
+        .try_create_vault(fx.vault_1, fx.treasury, fx.agent, mandate(9))
+        .unwrap_err();
+    assert_eq!(blocked, Error::MultisigNotAuthorized.into());
+
+    // Owners propose + approve + execute the canonical action hash for this call.
+    let action = fx
+        .factory
+        .create_action_hash(fx.vault_1, fx.treasury, fx.agent, mandate(9));
+    let id = multisig.propose(action);
+    multisig.approve(id);
+    multisig.execute(id);
+
+    // Now the same call clears the gate and registers the vault.
+    let intent_id = fx
+        .factory
+        .create_vault(fx.vault_1, fx.treasury, fx.agent, mandate(9));
+    assert_eq!(intent_id, 0);
+    assert_eq!(fx.registry.count(), 1);
+
+    // A different action (different mandate) is still gated — no blanket bypass.
+    let blocked2 = fx
+        .factory
+        .try_create_vault(fx.vault_2, fx.treasury, fx.agent, mandate(10))
+        .unwrap_err();
+    assert_eq!(blocked2, Error::MultisigNotAuthorized.into());
 }
 
 #[test]

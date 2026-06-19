@@ -45,6 +45,8 @@ export function mapStreamMessage(msg: unknown): VaultEvent | null {
       return { kind: "DecisionAttested", sliceId: num("slice_id"), reason: str("reason") };
     case "StatusChanged":
       return { kind: "StatusChanged", paused: bool("paused") };
+    case "EmergencyWithdrawn":
+      return { kind: "EmergencyWithdrawn", returnedToTreasury: str("returned_to_treasury"), soldSoFar: str("sold_so_far") };
     case "Settled":
       return { kind: "Settled", completed: bool("completed"), soldSoFar: str("sold_so_far"), boughtSoFar: str("bought_so_far"), sliceCount: num("slice_count"), returnedToTreasury: str("returned_to_treasury") };
     default:

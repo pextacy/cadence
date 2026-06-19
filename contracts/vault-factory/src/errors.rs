@@ -20,4 +20,7 @@ pub enum Error {
     UnknownIntent = 5,
     /// The factory has not been configured with a vault package-hash yet.
     WasmNotConfigured = 6,
+    /// A multisig gate is wired and no executed multisig action authorises this
+    /// `create_vault` request (its derived action hash is not yet executed).
+    MultisigNotAuthorized = 7,
 }

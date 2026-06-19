@@ -113,6 +113,7 @@ const VAULT_STATUSES: ReadonlySet<string> = new Set<VaultStatus>([
   "Paused",
   "Completed",
   "Expired",
+  "Halted",
 ]);
 
 /** Build the default empty snapshot for an unknown track. */

@@ -17,11 +17,11 @@ starts.
 | 1 | Decompose every crate by concern + golden-vector preimage tests | ✅ Done |
 | 2a | Compose `AccessControl` into the vault (RBAC + `set_guardian`) | ✅ Done |
 | 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (fees + escrow-attestation path remain) |
-| **3** | **Guardian desk-wide pause fan-out (cross-contract wiring)** | 🟡 Contracts built; cross-contract wiring/tests pending |
-| **4** | **`VaultFactory` + `VaultRegistry` end-to-end create/register flow** | 🟡 Contracts built; deploy-flow integration pending |
-| **5** | **`TreasuryMultisig` gating + `OracleAggregator` band cross-check** | 🟡 Contracts built; integration pending |
-| 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (on-chain reconciliation + finality-gating remain) |
-| X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | ⏳ Pending |
+| 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (idempotent pause/resume + fan-out test over real vaults) |
+| 4 | `VaultFactory` + `VaultRegistry` end-to-end create/register flow | ✅ Done (create→register→enumerate→by-treasury test; deploy.ts registry-write script-assisted) |
+| 5 | `TreasuryMultisig` gating + oracle band cross-check | ✅ Done (multisig-gated `create_vault` + optional oracle band in `execute_slice`) |
+| 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done |
+| X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | 🟢 Mostly done (clippy `-D warnings` clean, warning-free wasm, build-ordering fixed, Status::Halted fixed across agent+dashboard; CI action-SHA pin + Playwright E2E + testnet smoke deferred — need network/testnet) |
 
 Legend: ✅ done · 🟡 components exist & unit-tested but not yet integrated across
 contracts · ⏳ not started.

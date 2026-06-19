@@ -34,6 +34,17 @@ describe("reduceEvents", () => {
     expect(settled.status).toBe("Completed");
     expect(settled.settled?.sliceCount).toBe(10);
   });
+
+  it("reflects an emergency withdrawal as the terminal Halted state", () => {
+    const halted = reduceEvents([
+      ...seq,
+      { kind: "StatusChanged", paused: true },
+      { kind: "EmergencyWithdrawn", returnedToTreasury: "801000", soldSoFar: "100000" },
+    ]);
+    expect(halted.status).toBe("Halted");
+    expect(halted.settled?.completed).toBe(false);
+    expect(halted.settled?.returnedToTreasury).toBe(801_000n);
+  });
 });
 
 describe("deriveMetrics", () => {

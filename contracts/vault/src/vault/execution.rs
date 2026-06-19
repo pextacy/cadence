@@ -72,6 +72,11 @@ impl ExecutionVault {
         ) {
             self.env().revert(e);
         }
+        // 5b. Optional oracle cross-check: the slice's implied price must sit within
+        //     `oracle_tolerance_bps` of the oracle's latest price. Defence in depth
+        //     on top of the static mandate band — skipped when no oracle is wired.
+        self.check_oracle_band(quoted_out, sell_amount);
+
         // 6. venue ∈ allowlist — and resolve its mandate-bound destination. The
         //    caller never supplies the address, so it cannot redirect the funds.
         if !self.venue_allowlist.get_or_default(&venue) {
@@ -187,6 +192,39 @@ impl ExecutionVault {
             swap_deploy_hash,
             bought_so_far: bought,
         });
+    }
+
+    /// Cross-check the slice's implied price against the wired oracle. No-op when
+    /// no oracle is configured. Reverts [`Error::OracleBandBreach`] when the implied
+    /// price deviates from the oracle's latest price by more than the configured
+    /// tolerance. The oracle read itself reverts (stale/unset pair) and so halts
+    /// the slice — fail safe, not open.
+    fn check_oracle_band(&self, quoted_out: U512, sell_amount: U512) {
+        let oracle = match self.oracle.get() {
+            Some(addr) => addr,
+            None => return,
+        };
+        let implied = match cadence_common::price::implied_price(quoted_out, sell_amount) {
+            Ok(v) => v,
+            Err(_) => self.env().revert(Error::Overflow),
+        };
+        let pair = self.oracle_pair.get_or_default();
+        let reference =
+            cadence_price_oracle::types::OracleAdapterContractRef::new(self.env(), oracle)
+                .latest_price(pair)
+                .price;
+        let tolerance = match cadence_common::fee::fee_amount(
+            reference,
+            self.oracle_tolerance_bps.get_or_default(),
+        ) {
+            Ok(v) => v,
+            Err(_) => self.env().revert(Error::Overflow),
+        };
+        let lower = reference.saturating_sub(tolerance);
+        let upper = reference.saturating_add(tolerance);
+        if implied < lower || implied > upper {
+            self.env().revert(Error::OracleBandBreach);
+        }
     }
 
     /// Record the agent's decision reasoning for a slice (audit trail).

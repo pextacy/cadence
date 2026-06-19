@@ -32,6 +32,19 @@ use crate::events::{Approved, Executed, ProposalCreated, Revoked};
 use crate::types::{Proposal, ProposalStatus};
 use odra::prelude::*;
 
+/// The cross-contract authorisation read a gated contract calls to confirm an
+/// action cleared the multisig.
+///
+/// Declared `#[odra::external_contract]` so a consumer holding only the multisig's
+/// `Address` can build a `MultisigGateContractRef::new(env, addr)` and ask whether
+/// a given `action_hash` has been approved-and-executed — without depending on the
+/// concrete `TreasuryMultisig` type.
+#[odra::external_contract]
+pub trait MultisigGate {
+    /// Whether an executed proposal committed to `action_hash` exists.
+    fn is_action_executed(&self, action_hash: [u8; 32]) -> bool;
+}
+
 /// An M-of-N multisig gate over abstract treasury actions.
 #[odra::module(
     events = [ProposalCreated, Approved, Revoked, Executed],
@@ -50,6 +63,9 @@ pub struct TreasuryMultisig {
     proposals: Mapping<u64, Proposal>,
     /// Per-proposal, per-owner approval flag: `(id, owner) -> approved?`.
     approvals: Mapping<(u64, Address), bool>,
+    /// Set of action hashes that have reached an executed proposal. Lets a gated
+    /// contract authorise purely by `action_hash`, without knowing the proposal id.
+    executed_actions: Mapping<[u8; 32], bool>,
 }
 
 #[odra::module]
@@ -169,6 +185,8 @@ impl TreasuryMultisig {
             &id,
             Proposal { status: ProposalStatus::Executed, ..proposal },
         );
+        // Record the action hash so a gated contract can authorise by hash alone.
+        self.executed_actions.set(&action_hash, true);
         self.env().emit_event(Executed { id, action_hash, approvals });
     }
 
@@ -207,6 +225,12 @@ impl TreasuryMultisig {
     /// Whether `owner` has a live approval recorded against proposal `id`.
     pub fn has_approved(&self, id: u64, owner: Address) -> bool {
         self.approvals.get_or_default(&(id, owner))
+    }
+
+    /// Whether an executed proposal committed to `action_hash` exists. The
+    /// cross-contract authorisation read consumers gate on (see [`MultisigGate`]).
+    pub fn is_action_executed(&self, action_hash: [u8; 32]) -> bool {
+        self.executed_actions.get_or_default(&action_hash)
     }
 
     // ----- internal helpers (never exposed as entrypoints) -----

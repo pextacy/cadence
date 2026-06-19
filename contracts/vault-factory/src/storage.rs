@@ -1,6 +1,7 @@
 //! Persistent state for the [`VaultFactory`](crate::factory::VaultFactory): the
 //! per-request intent record and the module's storage layout.
 
+#[allow(unused_imports)]
 use crate::errors::Error;
 use crate::events::{VaultDeployed, VaultIntentRecorded, WasmUpdated};
 use cadence_access_control::AccessControl;
@@ -50,4 +51,7 @@ pub struct VaultFactory {
     pub(crate) count: Var<u64>,
     /// Primary index: intent id -> record.
     pub(crate) intents: Mapping<u64, VaultIntent>,
+    /// Optional treasury multisig gate. When set, `create_vault` requires the
+    /// action to have cleared an M-of-N multisig approval before it will run.
+    pub(crate) multisig: Var<Address>,
 }

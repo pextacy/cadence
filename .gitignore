@@ -18,6 +18,9 @@ Cargo.lock
 *.pem
 mandate.signed.json
 
+# Agent runtime state (durable journal, snapshots, audit chain)
+.cadence-state/
+
 # Editor / OS
 .idea/
 .vscode/

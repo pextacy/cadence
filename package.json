@@ -14,8 +14,11 @@
     "node": ">=18"
   },
   "scripts": {
+    "build:mandate": "npm run build -w @cadence/mandate",
+    "pretest": "npm run build:mandate",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
+    "pretypecheck": "npm run build:mandate",
     "typecheck": "npm run typecheck --workspaces --if-present"
   }
 }

@@ -69,6 +69,19 @@ export function reduceEvent(state: DashboardState, ev: VaultEvent): DashboardSta
       return { ...state, slices: upsertSlice(state.slices, ev.sliceId, { reason: ev.reason }) };
     case "StatusChanged":
       return { ...state, status: (ev.paused ? "Paused" : "Active") as VaultStatus };
+    case "EmergencyWithdrawn":
+      // Terminal: the treasury drained a paused vault. Funds are back with the
+      // treasury and no further execution is possible.
+      return {
+        ...state,
+        status: "Halted",
+        soldSoFar: BigInt(ev.soldSoFar),
+        settled: {
+          completed: false,
+          sliceCount: state.slices.length,
+          returnedToTreasury: BigInt(ev.returnedToTreasury),
+        },
+      };
     case "Settled":
       return {
         ...state,

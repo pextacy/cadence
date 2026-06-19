@@ -36,13 +36,16 @@ export const VAULT_NAMED_KEYS = {
   totalSell: "total_sell",
 } as const;
 
-/** Odra encodes the `Status` enum as a u8 discriminant in this order. */
+/** Odra encodes the `Status` enum as a u8 discriminant in this order. Must stay
+ * in lockstep with `contracts/vault/src/vault/status.rs` (Halted is terminal,
+ * set by `emergency_withdraw`). */
 const STATUS_BY_DISCRIMINANT: readonly VaultStatus[] = [
   "Funded",
   "Active",
   "Paused",
   "Completed",
   "Expired",
+  "Halted",
 ];
 
 export interface ReconcileOptions {
