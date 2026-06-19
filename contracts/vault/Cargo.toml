@@ -7,6 +7,7 @@ edition.workspace = true
 odra = { workspace = true }
 cadence-common = { path = "../common" }
 cadence_access_control = { path = "../access-control", default-features = false }
+cadence_dex_adapter = { path = "../dex-adapter", default-features = false }
 
 [dev-dependencies]
 odra-test = { workspace = true }

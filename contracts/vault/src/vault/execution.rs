@@ -1,8 +1,12 @@
 //! The constrained spend entrypoint and its companions: `execute_slice`,
 //! `record_fill`, `attest`.
 
+use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::U512;
 use odra::prelude::*;
+use odra::ContractRef;
+
+use cadence_dex_adapter::adapter::VenueAdapterContractRef;
 
 use super::errors::Error;
 use super::events::{DecisionAttested, FillRecorded, SliceExecuted};
@@ -92,12 +96,61 @@ impl ExecutionVault {
             sell_amount,
             quoted_out,
             min_out,
-            venue,
+            venue: venue.clone(),
             sold_so_far: new_sold,
         });
 
-        self.env().transfer_tokens(&venue_address, &sell_amount);
+        if self.venue_is_adapter.get_or_default(&venue) {
+            // Settle cross-contract through the typed VenueAdapter instead of a
+            // blind transfer. The vault attaches the sell amount as native value;
+            // the adapter credits the realised buy asset to the treasury. Atomic
+            // venues return the realised amount in this same call, so the fill is
+            // recorded immediately; escrow venues return `atomic = false` and the
+            // fill is proven later via the agent's `record_fill`.
+            let recipient = self.treasury.get_or_revert_with(Error::NotTreasury);
+            let receipt = VenueAdapterContractRef::new(self.env(), venue_address)
+                .with_tokens(sell_amount)
+                .swap(
+                    self.sell_asset.get_or_default(),
+                    self.buy_asset.get_or_default(),
+                    sell_amount,
+                    min_out,
+                    recipient,
+                );
+            if receipt.atomic {
+                self.record_atomic_fill(slice_id, receipt.bought_amount, receipt.settlement_ref);
+            }
+        } else {
+            // Legacy / off-chain path: release the sell asset to the mandate-bound
+            // destination; the agent reports the realised fill via `record_fill`.
+            self.env().transfer_tokens(&venue_address, &sell_amount);
+        }
         slice_id
+    }
+
+    /// Record a fill that settled atomically inside `execute_slice` (when a
+    /// `VenueAdapter` returned `atomic = true`). Mirrors `record_fill_impl`'s
+    /// effects but omits the agent assertion — the caller (`execute_slice`) has
+    /// already enforced it, and the adapter has already guaranteed
+    /// `bought_amount >= min_out`.
+    fn record_atomic_fill(&mut self, slice_id: u32, bought_amount: U512, settlement_ref: Bytes) {
+        let min_out = self.slice_min_out.get_or_default(&slice_id);
+        if let Err(e) = guardrails::check_fill_min_out(bought_amount, min_out) {
+            self.env().revert(e);
+        }
+        let bought = match guardrails::add_bought(self.bought_so_far.get_or_default(), bought_amount)
+        {
+            Ok(v) => v,
+            Err(e) => self.env().revert(e),
+        };
+        self.bought_so_far.set(bought);
+        self.slice_filled.set(&slice_id, true);
+        self.env().emit_event(FillRecorded {
+            slice_id,
+            bought_amount,
+            swap_deploy_hash: String::from_utf8(settlement_ref.to_vec()).unwrap_or_default(),
+            bought_so_far: bought,
+        });
     }
 
     /// Record realised swap proceeds for a slice and link the on-chain swap deploy

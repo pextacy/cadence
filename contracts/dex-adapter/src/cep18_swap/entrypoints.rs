@@ -26,12 +26,17 @@ impl Cep18SwapAdapter {
     #[odra(payable)]
     pub fn swap(
         &mut self,
-        _sell_asset: String,
-        _buy_asset: String,
+        sell_asset: String,
+        buy_asset: String,
         sell_amount: U512,
         min_out: U512,
         recipient: Address,
     ) -> SwapReceipt {
+        // Parameter names MUST match the `VenueAdapter` trait: Odra dispatches
+        // cross-contract args by name, so `_sell_asset`/`_buy_asset` would break
+        // trait-ref calls from the vault (MissingArg). This single-pair pool does
+        // not branch on the asset symbols.
+        let _ = (&sell_asset, &buy_asset);
         if sell_amount.is_zero() {
             self.env().revert(Error::ZeroSellAmount);
         }

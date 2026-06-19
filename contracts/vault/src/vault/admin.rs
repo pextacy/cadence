@@ -41,6 +41,17 @@ impl ExecutionVault {
         self.ac.grant_unchecked(roles::GUARDIAN, guardian, by);
     }
 
+    /// Treasury opts an allowlisted venue into cross-contract settlement through
+    /// its `VenueAdapter` (the venue's mandate-bound address is then treated as an
+    /// adapter contract), or back to a direct transfer. Treasury-only.
+    pub(super) fn set_venue_adapter_impl(&mut self, venue: String, is_adapter: bool) {
+        self.assert_treasury();
+        if !self.venue_allowlist.get_or_default(&venue) {
+            self.env().revert(Error::VenueNotAllowed);
+        }
+        self.venue_is_adapter.set(&venue, is_adapter);
+    }
+
     /// Emergency drain. **Treasury only**, and only while the vault is `Paused`.
     ///
     /// This is the incident kill-switch: when the circuit-breaker has paused the

@@ -62,6 +62,10 @@ pub struct ExecutionVault {
     // venue. Set once at `init` from the signed mandate; the agent cannot supply or
     // override it, so it can never redirect funds to an address it controls.
     pub(super) venue_addr: Mapping<String, Address>,
+    // Whether a venue's destination is a `VenueAdapter` contract the vault settles
+    // through cross-contract (true), or a plain destination it transfers to
+    // directly (false, the default). Set by the treasury via `set_venue_adapter`.
+    pub(super) venue_is_adapter: Mapping<String, bool>,
     // Ordered, canonical copies of the venue id / address lists (Odra `Mapping` is
     // not enumerable). Stored so `verify_mandate` can rebuild the exact preimage.
     pub(super) venue_ids: Var<Vec<String>>,

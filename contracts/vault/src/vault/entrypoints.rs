@@ -114,6 +114,12 @@ impl ExecutionVault {
         self.ac.has_role(cadence_access_control::roles::GUARDIAN, who)
     }
 
+    /// Treasury opts a venue into cross-contract `VenueAdapter` settlement (vs the
+    /// default direct transfer).
+    pub fn set_venue_adapter(&mut self, venue: String, is_adapter: bool) {
+        self.set_venue_adapter_impl(venue, is_adapter)
+    }
+
     pub fn get_status(&self) -> Status {
         self.get_status_impl()
     }
