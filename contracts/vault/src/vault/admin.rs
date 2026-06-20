@@ -88,6 +88,18 @@ impl ExecutionVault {
         self.oracle_max_deviation_bps.set(max_deviation_bps);
     }
 
+    /// Treasury wires the optional protocol-fee module: once set, every recorded
+    /// slice fill accrues a basis-points fee on the realised buy amount to the
+    /// vault's ledger entry on `fee_module` via the `FeeCollector` cross-contract
+    /// interface. Unset by default (no fee accrual). Treasury-only.
+    ///
+    /// The vault must separately be granted the fee-collector role on the module
+    /// (its accrual call asserts that role), otherwise the fee call would revert.
+    pub(super) fn set_fee_module_impl(&mut self, fee_module: Address) {
+        self.assert_treasury();
+        self.fee_module.set(fee_module);
+    }
+
     /// Emergency drain. **Treasury only**, and only while the vault is `Paused`.
     ///
     /// This is the incident kill-switch: when the circuit-breaker has paused the

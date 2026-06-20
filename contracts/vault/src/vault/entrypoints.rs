@@ -126,6 +126,12 @@ impl ExecutionVault {
         self.set_oracle_impl(oracle, pair, max_deviation_bps)
     }
 
+    /// Treasury wires the optional protocol-fee module (unset by default). Once
+    /// set, each recorded fill accrues a fee on the realised buy amount.
+    pub fn set_fee_module(&mut self, fee_module: Address) {
+        self.set_fee_module_impl(fee_module)
+    }
+
     pub fn get_status(&self) -> Status {
         self.get_status_impl()
     }

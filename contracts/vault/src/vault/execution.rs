@@ -10,6 +10,7 @@ use cadence_common::checked::checked_mul;
 use cadence_common::price::implied_price;
 use cadence_common::scale::BPS_DENOMINATOR;
 use cadence_dex_adapter::adapter::VenueAdapterContractRef;
+use cadence_fee_module::FeeCollectorContractRef;
 use cadence_price_oracle::types::OracleAdapterContractRef;
 
 use super::errors::Error;
@@ -161,6 +162,9 @@ impl ExecutionVault {
             swap_deploy_hash: String::from_utf8(settlement_ref.to_vec()).unwrap_or_default(),
             bought_so_far: bought,
         });
+        // Checks-effects-interactions: all fill state is written above; accrue the
+        // (optional) protocol fee last, as it is an external call.
+        self.accrue_fee_if_configured(bought_amount);
     }
 
     /// Record realised swap proceeds for a slice and link the on-chain swap deploy
@@ -197,6 +201,27 @@ impl ExecutionVault {
             swap_deploy_hash,
             bought_so_far: bought,
         });
+        // Checks-effects-interactions: all fill state is written above; accrue the
+        // (optional) protocol fee last, as it is an external call.
+        self.accrue_fee_if_configured(bought_amount);
+    }
+
+    /// Accrue the protocol fee on a recorded fill's `bought_amount`, but ONLY when
+    /// a fee module is wired (via `set_fee_module`). A no-op when no fee module is
+    /// set or the amount is zero, so every venue/test without a fee module is
+    /// unaffected. Cross-contract call via the `FeeCollector` trait: the vault must
+    /// hold the collector role on the module, and the module skips a zero amount
+    /// (it reverts `ZeroAmount`), so we guard that here too.
+    fn accrue_fee_if_configured(&mut self, bought_amount: U512) {
+        let fee_module = match self.fee_module.get() {
+            Some(addr) => addr,
+            None => return,
+        };
+        if bought_amount.is_zero() {
+            return;
+        }
+        FeeCollectorContractRef::new(self.env(), fee_module)
+            .accrue_fee(self.buy_asset.get_or_default(), bought_amount);
     }
 
     /// Optional oracle cross-check: when an oracle is configured, require this

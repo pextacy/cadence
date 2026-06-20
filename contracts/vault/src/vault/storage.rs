@@ -89,6 +89,13 @@ pub struct ExecutionVault {
     pub(super) oracle_pair: Var<String>,
     pub(super) oracle_max_deviation_bps: Var<u32>,
 
+    // Optional protocol-fee module. When `fee_module` is set, each recorded slice
+    // fill additionally accrues a basis-points protocol fee on the realised buy
+    // amount via the `FeeCollector` cross-contract interface. Unset (the default)
+    // disables fee accrual, so venues and tests that run without a fee module are
+    // completely unaffected. The vault must hold the collector role on the module.
+    pub(super) fee_module: Var<Address>,
+
     /// Role-based access control. Composed (never deployed standalone) so the
     /// vault shares the desk-wide RBAC vocabulary: TREASURY/AGENT/GUARDIAN are
     /// bootstrapped at `init`, and a GUARDIAN (e.g. the desk Guardian contract)

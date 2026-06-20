@@ -9,6 +9,7 @@ cadence-common = { path = "../common" }
 cadence_access_control = { path = "../access-control", default-features = false }
 cadence_dex_adapter = { path = "../dex-adapter", default-features = false }
 cadence_price_oracle = { path = "../price-oracle", default-features = false }
+cadence-fee-module = { path = "../fee-module", default-features = false }
 
 [dev-dependencies]
 odra-test = { workspace = true }

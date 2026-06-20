@@ -255,7 +255,9 @@ fn resume_is_idempotent_when_already_active() {
 
     // Resuming an Active vault is a no-op, not a revert.
     fx.env.set_caller(fx.treasury);
-    fx.contract.try_resume().expect("resuming Active is a no-op");
+    fx.contract
+        .try_resume()
+        .expect("resuming Active is a no-op");
     assert_eq!(fx.contract.get_status(), Status::Active);
 }
 
