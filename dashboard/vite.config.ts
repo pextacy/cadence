@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -13,4 +14,10 @@ export default defineConfig({
   plugins: [react()],
   server: { port },
   preview: { port },
+  // Vitest only owns the unit tests under src/. The Playwright E2E specs live in
+  // e2e/ and use Playwright's own runner — keep them out of Vitest's glob.
+  test: {
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    exclude: ["e2e/**", "node_modules/**", "dist/**"],
+  },
 });
