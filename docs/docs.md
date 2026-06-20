@@ -75,7 +75,10 @@ Build contracts against the Odra framework — read `https://odra.dev/llms.txt` 
 - `mandate_hash` and decoded limits (`total_sell`, `end_time`, `max_slippage_bps`, `price_floor`, `price_ceiling`, `venue_allowlist`)
 - `sold_so_far`, `bought_so_far`, `slice_count`
 - `agent_identity` (the account-abstraction identity authorised to call `execute_slice`)
-- `status`: `Funded | Active | Paused | Completed | Expired`
+- `status`: `Funded | Active | Paused | Completed | Expired | Halted`
+- optional cross-contract wiring (all unset by default): `oracle` band check,
+  `venue_is_adapter` settlement routing, and `fee_module` + `fee_active` +
+  `pending_fee_base` for decoupled protocol-fee accrual
 
 ### Entrypoints (illustrative)
 | Entrypoint | Caller | Behaviour |
@@ -83,9 +86,23 @@ Build contracts against the Odra framework — read `https://odra.dev/llms.txt` 
 | `init(mandate, signature)` | treasury | Verify signature, store hash + limits, set `Funded` |
 | `fund()` | treasury | Receive the sell asset into custody, set `Active` |
 | `execute_slice(quote, route, min_out)` | agent identity | Re-validate against limits; if any check fails → **revert**; else perform/settle the swap, update totals, record fill |
+| `record_fill(slice_id, bought, swap_ref)` | agent identity | Credit realised proceeds for an off-chain/escrow slice (enforces `bought >= min_out`); accumulates the optional fee obligation locally |
 | `attest(slice_id, decision_blob)` | agent identity | Record the decision attestation for a slice |
-| `pause()` / `resume()` | agent identity / treasury | Circuit-breaker control |
+| `pause()` / `resume()` | agent / treasury / GUARDIAN | Circuit-breaker control; **idempotent** (a no-op when already in the target state) so a desk-wide Guardian sweep tolerates status drift |
 | `settle()` | anyone after `end_time` or on completion | Release proceeds to treasury, set `Completed`/`Expired`, emit final report |
+| `emergency_withdraw()` | treasury (only while `Paused`) | Incident kill-switch: sweep remaining balance to treasury, set terminal `Halted` |
+| `set_guardian` / `set_venue_adapter` / `set_oracle` | treasury | Optional wiring: GUARDIAN role, cross-contract `VenueAdapter` settlement, oracle price-deviation band |
+| `set_fee_module` / `unset_fee_module` | treasury | Enable/disable optional protocol-fee accrual (unset by default) |
+| `flush_fees()` | agent / treasury | Push the accumulated fee obligation to the fee module; the **only** place the external `accrue_fee` call happens |
+
+**Optional protocol fee (decoupled, fail-safe).** Fee accrual is intentionally
+split from fill recording: a recorded fill only accumulates its realised buy amount
+into `pending_fee_base` locally (no external call), and the cross-contract
+`accrue_fee` push happens solely in the separate, retriable `flush_fees`. This
+guarantees a fee-module fault (revoked collector role, a repointed/buggy module)
+can never block a legitimate, already-settled fill — it can only fail the
+independent `flush_fees`, leaving the obligation intact for retry (CLAUDE.md
+§4.5/§4.6). Unset by default, so vaults without a fee module are unaffected.
 
 ### On-chain checks in `execute_slice` (all must pass)
 1. `status == Active`

@@ -49,13 +49,19 @@ contracts · ⏳ not started.
   the same call. Backward compatible (direct transfer stays the default).
   `tests/integration_adapter.rs` proves end-to-end atomic settlement to the
   treasury. Found+fixed an Odra by-name cross-contract dispatch bug (adapter param
-  names must match the trait). **Fee accrual on fill — DONE:** a treasury-only
-  `set_fee_module` wires an optional `FeeModule`; once set, every recorded fill
-  accrues a bps fee on the realised buy amount via the `FeeCollector`
-  cross-contract interface (last, after state writes — checks-effects-
-  interactions). Unset by default, so existing venues are unaffected;
-  `tests/integration_fee.rs` proves the accrued amount and the zero-accrual
-  control. *Remaining:* the escrow/signed-attestation path for off-chain
+  names must match the trait). **Optional protocol fee — DONE (decoupled,
+  fail-safe):** a treasury-only `set_fee_module` enables an optional `FeeModule`;
+  once active, each recorded fill only **accumulates** its realised buy amount into
+  `pending_fee_base` locally (no external call), and the cross-contract `accrue_fee`
+  push happens solely in the separate, retriable `flush_fees` (agent- or
+  treasury-callable). This split — adopted after an adversarial review flagged that
+  an inline fee call could brick an already-settled fill on the escrow path — means
+  a fee-module fault can only ever fail `flush_fees` (obligation preserved for
+  retry), never a fill (CLAUDE.md §4.5/§4.6). `unset_fee_module` is the fail-safe
+  off-switch. Unset by default; `tests/integration_fee.rs` proves the
+  accumulate→flush path and the reverting-module-can't-block-`record_fill`
+  regression. The agent flushes opportunistically at settle (swallowing the benign
+  `FeeNotActive`/`NothingToFlush` reverts). *Remaining:* the escrow/signed-attestation path for off-chain
   (cspr.trade) venues — the `SettlementAdapter` already implements
   attestation-gated `record_settlement`, but how the vault consumes that
   settlement (vs today's agent-submitted `record_fill`) is a product decision
@@ -232,7 +238,11 @@ snapshot, fill blocked on unconfirmed swap, and nonce serialization across track
   "wants a real `docker build`" item.
 - **Deploy safety / E2E:** ✅ finality polling + deployment manifest in `scripts`;
   a **mainnet guard** (`assertDeployTargetAllowed`) now refuses a mainnet
-  deploy/fund/demo unless `ALLOW_MAINNET=true` (testnet unchanged), unit-tested.
+  deploy/fund/demo unless `ALLOW_MAINNET=true` (testnet unchanged), unit-tested. It
+  inspects the **effective resolved target** — `CASPER_NETWORK`, the resolved chain
+  name (`casper`), and the resolved node-RPC host — so the `CASPER_CHAIN_NAME` /
+  `CASPER_NODE_RPC` override paths a review found could bypass a network-only check
+  can no longer slip a real mainnet tx past the guard.
   **Playwright E2E** covers the dashboard CreateMandate→sign flow (client-side, no
   network) plus LiveExecution/FinalReport over a stubbed CSPR.cloud socket. A live
   testnet smoke still remains once the contract surface settles.
