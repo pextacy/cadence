@@ -1,188 +1,108 @@
-//! Wave 2b item A integration: the vault accrues a protocol fee on each slice
-//! fill — but ONLY when a fee module is wired via `set_fee_module`.
+//! Wave 2b item A integration: the vault accrues a protocol fee on slice fills —
+//! but accrual is DECOUPLED from fill recording so a fee-module fault can never
+//! block a legitimate fill (CLAUDE.md §4.5/§4.6).
 //!
-//! Proves the full optional path: treasury deploys a real `FeeModule`, grants the
-//! vault the fee-collector role, and wires it via `set_fee_module`. The agent then
-//! executes a slice that settles atomically through the `Cep18SwapAdapter`; the
-//! vault records the fill and, last (checks-effects-interactions), calls
-//! `accrue_fee` cross-contract on the realised buy amount. The fee module's accrued
-//! balance for the vault must equal `bought_amount * fee_bps / 10_000`.
-//!
-//! A control test runs the identical flow with NO fee module set and asserts the
-//! fill still works and nothing is accrued — proving fee accrual is truly optional.
+//! A recorded fill only accumulates its realised buy amount into the vault's
+//! `pending_fee_base` locally; the cross-contract `accrue_fee` call happens solely
+//! in the separate, retriable `flush_fees` entrypoint. Two tests cover the design:
+//! the happy accumulate→flush path, and the finding-#1 regression proving a
+//! reverting/unauthorised fee module cannot block `record_fill`.
 
 mod common;
 
 use odra::casper_types::U512;
-use odra::host::{Deployer, HostEnv, HostRef};
-use odra::prelude::Address;
+use odra::host::{Deployer, HostRef};
 
-use cadence_dex_adapter::cep18_swap::{
-    Cep18SwapAdapter, Cep18SwapAdapterHostRef, Cep18SwapAdapterInitArgs,
-};
 use cadence_fee_module::fees::FeeModuleInitArgs;
 use cadence_fee_module::{FeeModule, FeeModuleHostRef};
-use cadence_vault::vault::{ExecutionVault, ExecutionVaultHostRef, ExecutionVaultInitArgs};
 
 use common::*;
 
-const VENUE: &str = "cspr.trade";
-// 1e6-scale price of 2.0 → bought = sell * 2. (The cep18 adapter uses PRICE_SCALE_1E6.)
-const ADAPTER_PRICE: u64 = 2_000_000;
 const FEE_BPS: u32 = 25; // 0.25%
+const BOUGHT: u64 = 200_000;
 
-/// Deploy the atomic adapter + a vault whose single venue address is that adapter,
-/// fund the vault, and opt the venue into adapter routing. Mirrors the scaffolding
-/// in `integration_adapter.rs`. The fee module is wired separately by each test so
-/// the no-fee control can reuse this unchanged.
-fn setup() -> (
-    HostEnv,
-    ExecutionVaultHostRef,
-    Cep18SwapAdapterHostRef,
-    Address,
-) {
-    let env = odra_test::env();
-    let treasury = env.get_account(0);
-    let agent = env.get_account(1);
-    env.set_caller(treasury);
-
-    // 1. Deploy the atomic adapter, set its price, seed its payout reserve.
-    let mut adapter = Cep18SwapAdapter::deploy(
-        &env,
-        Cep18SwapAdapterInitArgs {
-            venue_id: VENUE.to_string(),
-        },
-    );
-    adapter.set_price(U512::from(ADAPTER_PRICE));
-    adapter.with_tokens(U512::from(TOTAL_SELL)).seed_reserve();
-
-    // 2. Sign a mandate whose venue address IS the adapter, and deploy the vault.
-    let adapter_addr = adapter.contract_address();
-    let preimage = mandate_message_offchain(
-        agent,
-        treasury,
-        "CSPR",
-        "USDC",
-        U512::from(TOTAL_SELL),
-        END_TIME_MS,
-        SLIPPAGE_BPS,
-        U512::zero(),
-        U512::zero(),
-        &venues(),
-        &[adapter_addr],
-        &nonce32(),
-    );
-    let casper_signature = env.sign_message(&preimage, &treasury);
-    let mut vault = ExecutionVault::deploy(
-        &env,
-        ExecutionVaultInitArgs {
-            agent,
-            mandate_digest: digest32(),
-            signature: odra::casper_types::bytesrepr::Bytes::from(vec![1u8; 65]),
-            treasury_public_key: env.public_key(&treasury),
-            casper_signature,
-            mandate_nonce: nonce32(),
-            sell_asset: "CSPR".to_string(),
-            buy_asset: "USDC".to_string(),
-            total_sell: U512::from(TOTAL_SELL),
-            end_time_ms: END_TIME_MS,
-            max_slippage_bps: SLIPPAGE_BPS,
-            price_floor: U512::zero(),
-            price_ceiling: U512::zero(),
-            venues: venues(),
-            venue_addresses: vec![adapter_addr],
-        },
-    );
-
-    // 3. Fund the vault, then opt the venue into cross-contract adapter routing.
-    env.set_caller(treasury);
-    vault.with_tokens(U512::from(TOTAL_SELL)).fund();
-    vault.set_venue_adapter(VENUE.to_string(), true);
-
-    (env, vault, adapter, adapter_addr)
+/// Expected fee for `BOUGHT` at `FEE_BPS`: bought * bps / 10_000.
+fn expected_fee() -> U512 {
+    U512::from(BOUGHT) * U512::from(FEE_BPS) / U512::from(10_000u64)
 }
 
-/// Deploy a real `FeeModule` (treasury is the deployer/admin), grant the vault the
-/// fee-collector role, and return it. The granting entrypoint is `grant_collector`.
-fn deploy_fee_module_for(
-    env: &HostEnv,
-    treasury: Address,
-    vault_addr: Address,
-) -> FeeModuleHostRef {
-    env.set_caller(treasury);
+/// Deploy a real `FeeModule` (treasury is admin) and grant the vault the collector
+/// role so its cross-contract `accrue_fee` is authorised.
+fn deploy_fee_module(fx: &Fixture, vault_addr: odra::prelude::Address) -> FeeModuleHostRef {
+    fx.env.set_caller(fx.treasury);
     let mut fee_module = FeeModule::deploy(
-        env,
+        &fx.env,
         FeeModuleInitArgs {
             init_fee_bps: FEE_BPS,
         },
     );
-    // The VAULT is the cross-contract caller of `accrue_fee`, so the vault — not the
-    // treasury — must hold the collector role on the module.
     fee_module.grant_collector(vault_addr);
-    assert!(fee_module.is_collector(vault_addr));
     fee_module
 }
 
 #[test]
-fn fill_accrues_protocol_fee_when_fee_module_is_wired() {
-    let (env, mut vault, _adapter, _adapter_addr) = setup();
-    let treasury = env.get_account(0);
-    let agent = env.get_account(1);
-    let vault_addr = vault.contract_address();
+fn flush_accrues_pending_fee_after_fill() {
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    let vault_addr = fx.contract.contract_address();
 
-    // Wire a real fee module and grant the vault the collector role on it.
-    let fee_module = deploy_fee_module_for(&env, treasury, vault_addr);
-    env.set_caller(treasury);
-    vault.set_fee_module(fee_module.contract_address());
+    let fee_module = deploy_fee_module(&fx, vault_addr);
+    fx.env.set_caller(fx.treasury);
+    fx.contract.set_fee_module(fee_module.contract_address());
 
-    // Agent executes a slice that settles atomically: bought = 200_000.
-    env.set_caller(agent);
-    vault.execute_slice(
-        U512::from(100_000u64),
-        U512::from(200_000u64),
-        U512::from(198_000u64),
-        VENUE.to_string(),
-    );
+    // A slice + fill only ACCUMULATES the obligation locally — nothing is accrued
+    // on the module yet (the fee call is decoupled into flush_fees).
+    let id = ok_slice(&mut fx);
+    fx.env.set_caller(fx.agent);
+    fx.contract
+        .record_fill(id, U512::from(BOUGHT), "deploy-hash".to_string());
+    assert_eq!(fx.contract.get_pending_fee_base(), U512::from(BOUGHT));
+    assert_eq!(fee_module.accrued_of(vault_addr), U512::zero());
 
-    let bought = U512::from(200_000u64);
-    assert_eq!(vault.get_bought_so_far(), bought);
-
-    // The vault accrued `bought * fee_bps / 10_000` to ITS OWN ledger entry.
-    let expected_fee = bought * U512::from(FEE_BPS) / U512::from(10_000u64);
-    assert_eq!(expected_fee, U512::from(500u64), "0.25% of 200_000 = 500");
-    assert_eq!(
-        fee_module.accrued_of(vault_addr),
-        expected_fee,
-        "fee module must credit bought_amount * fee_bps / 10_000 to the vault"
-    );
+    // Flushing pushes the accumulated base to the module and resets the pending base.
+    fx.env.set_caller(fx.agent);
+    fx.contract.flush_fees();
+    assert_eq!(fee_module.accrued_of(vault_addr), expected_fee());
+    assert_eq!(fx.contract.get_pending_fee_base(), U512::zero());
 }
 
 #[test]
-fn fill_accrues_nothing_when_no_fee_module_is_set() {
-    // Control: identical flow but `set_fee_module` is NEVER called. The fill must
-    // still succeed and nothing is accrued — proving fee accrual is truly optional.
-    let (env, mut vault, _adapter, _adapter_addr) = setup();
-    let agent = env.get_account(1);
-    let vault_addr = vault.contract_address();
+fn record_fill_is_never_blocked_by_a_reverting_fee_module() {
+    // Finding-#1 regression. On the off-chain path execute_slice releases the sell
+    // asset to the venue in one tx; the agent proves the fill later via record_fill.
+    // Even with the vault's collector role revoked (so the module reverts on
+    // accrue_fee), record_fill MUST succeed — fills never call the module.
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    let vault_addr = fx.contract.contract_address();
 
-    // Deploy a fee module purely as an observer; it is NOT wired into the vault.
-    let treasury = env.get_account(0);
-    let fee_module = deploy_fee_module_for(&env, treasury, vault_addr);
+    let mut fee_module = deploy_fee_module(&fx, vault_addr);
+    fx.env.set_caller(fx.treasury);
+    fx.contract.set_fee_module(fee_module.contract_address());
+    // Revoke the role so any cross-contract accrue_fee would revert Unauthorized.
+    fx.env.set_caller(fx.treasury);
+    fee_module.revoke_collector(vault_addr);
+    assert!(!fee_module.is_collector(vault_addr));
 
-    env.set_caller(agent);
-    vault.execute_slice(
-        U512::from(100_000u64),
-        U512::from(200_000u64),
-        U512::from(198_000u64),
-        VENUE.to_string(),
+    // Slice releases funds, then the fill is recorded — must not revert.
+    let id = ok_slice(&mut fx);
+    fx.env.set_caller(fx.agent);
+    fx.contract
+        .record_fill(id, U512::from(BOUGHT), "deploy-hash".to_string());
+    assert_eq!(fx.contract.get_bought_so_far(), U512::from(BOUGHT));
+    assert_eq!(fx.contract.get_pending_fee_base(), U512::from(BOUGHT));
+
+    // The external fee call is isolated to flush_fees, which DOES revert now...
+    fx.env.set_caller(fx.agent);
+    assert!(
+        fx.contract.try_flush_fees().is_err(),
+        "flush must surface the module fault"
     );
-
-    // The fill still works...
-    assert_eq!(vault.get_bought_so_far(), U512::from(200_000u64));
-    // ...and nothing was accrued anywhere, because no fee module was wired.
-    assert_eq!(
-        fee_module.accrued_of(vault_addr),
-        U512::zero(),
-        "no fee module wired ⇒ no accrual, fill must be unaffected"
-    );
+    // ...yet the obligation survived. Restore the role and the retry settles it.
+    fx.env.set_caller(fx.treasury);
+    fee_module.grant_collector(vault_addr);
+    fx.env.set_caller(fx.agent);
+    fx.contract.flush_fees();
+    assert_eq!(fee_module.accrued_of(vault_addr), expected_fee());
+    assert_eq!(fx.contract.get_pending_fee_base(), U512::zero());
 }

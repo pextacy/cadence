@@ -126,10 +126,28 @@ impl ExecutionVault {
         self.set_oracle_impl(oracle, pair, max_deviation_bps)
     }
 
-    /// Treasury wires the optional protocol-fee module (unset by default). Once
-    /// set, each recorded fill accrues a fee on the realised buy amount.
+    /// Treasury wires/repoints the optional protocol-fee module and activates
+    /// accrual (unset by default). Once active, each recorded fill accumulates a fee
+    /// obligation locally; `flush_fees` pushes it to the module.
     pub fn set_fee_module(&mut self, fee_module: Address) {
         self.set_fee_module_impl(fee_module)
+    }
+
+    /// Treasury disables protocol-fee accrual (the fail-safe off-switch).
+    pub fn unset_fee_module(&mut self) {
+        self.unset_fee_module_impl()
+    }
+
+    /// Push the accumulated protocol-fee obligation to the wired fee module
+    /// (agent- or treasury-callable). The only place the external `accrue_fee` call
+    /// happens, so a fee-module fault can never block a fill.
+    pub fn flush_fees(&mut self) {
+        self.flush_fees_impl()
+    }
+
+    /// The protocol-fee base accumulated since the last successful flush.
+    pub fn get_pending_fee_base(&self) -> U512 {
+        self.get_pending_fee_base_impl()
     }
 
     pub fn get_status(&self) -> Status {

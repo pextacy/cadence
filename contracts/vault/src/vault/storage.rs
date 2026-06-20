@@ -13,8 +13,8 @@ use cadence_access_control::{roles, AccessControl};
 
 use super::errors::Error;
 use super::events::{
-    DecisionAttested, EmergencyWithdrawn, FillRecorded, MandateInitialised, MandateVerified,
-    Settled, SliceExecuted, StatusChanged, VaultFunded,
+    DecisionAttested, EmergencyWithdrawn, FeesFlushed, FillRecorded, MandateInitialised,
+    MandateVerified, Settled, SliceExecuted, StatusChanged, VaultFunded,
 };
 use super::status::Status;
 
@@ -29,7 +29,8 @@ use super::status::Status;
         DecisionAttested,
         StatusChanged,
         EmergencyWithdrawn,
-        Settled
+        Settled,
+        FeesFlushed
     ],
     errors = Error
 )]
@@ -89,12 +90,20 @@ pub struct ExecutionVault {
     pub(super) oracle_pair: Var<String>,
     pub(super) oracle_max_deviation_bps: Var<u32>,
 
-    // Optional protocol-fee module. When `fee_module` is set, each recorded slice
-    // fill additionally accrues a basis-points protocol fee on the realised buy
-    // amount via the `FeeCollector` cross-contract interface. Unset (the default)
-    // disables fee accrual, so venues and tests that run without a fee module are
-    // completely unaffected. The vault must hold the collector role on the module.
+    // Optional protocol-fee module, intentionally DECOUPLED from fill recording so
+    // a fee-module fault can never block a legitimate, already-settled fill (a
+    // non-essential fee must never gate the critical accounting path — CLAUDE.md
+    // §4.5/§4.6). When `fee_active` is set (via `set_fee_module`), each recorded
+    // fill only accumulates its realised buy amount into `pending_fee_base` locally
+    // — no external call. The accrued total is later pushed to the `fee_module` via
+    // the `FeeCollector` cross-contract interface in the separate, retriable
+    // `flush_fees` entrypoint; a revert there leaves `pending_fee_base` intact for
+    // retry and never touches fill state. `unset_fee_module` is the off-switch.
+    // Unset (the default) means fills accumulate nothing, so venues/tests without a
+    // fee module are completely unaffected. The vault must hold the collector role.
     pub(super) fee_module: Var<Address>,
+    pub(super) fee_active: Var<bool>,
+    pub(super) pending_fee_base: Var<U512>,
 
     /// Role-based access control. Composed (never deployed standalone) so the
     /// vault shares the desk-wide RBAC vocabulary: TREASURY/AGENT/GUARDIAN are

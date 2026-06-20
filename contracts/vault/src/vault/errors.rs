@@ -53,4 +53,9 @@ pub enum Error {
     /// more than the allowed band (an extra, dynamic check beyond the static
     /// mandate band; only enforced when an oracle is configured).
     OraclePriceDeviation = 24,
+    /// Fee accrual is not currently active (no fee module wired, or it was
+    /// disabled via `unset_fee_module`).
+    FeeNotActive = 25,
+    /// `flush_fees` was called with no accumulated fee obligation to flush.
+    NothingToFlush = 26,
 }

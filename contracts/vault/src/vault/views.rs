@@ -52,6 +52,9 @@ impl ExecutionVault {
     pub(super) fn is_venue_allowed_impl(&self, venue: String) -> bool {
         self.venue_allowlist.get_or_default(&venue)
     }
+    pub(super) fn get_pending_fee_base_impl(&self) -> U512 {
+        self.pending_fee_base.get_or_default()
+    }
 
     /// Public view that re-runs the stored-limits → preimage → `verify_signature`
     /// check so anyone can independently confirm the on-chain limits match the

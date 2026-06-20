@@ -85,6 +85,15 @@ pub struct EmergencyWithdrawn {
     pub sold_so_far: U512,
 }
 
+/// Emitted when accumulated protocol-fee obligations are flushed to the wired fee
+/// module. `base_amount` is the realised buy notional the fee was charged on;
+/// `fee` is the amount the module accrued to the vault's ledger entry.
+#[odra::event]
+pub struct FeesFlushed {
+    pub base_amount: U512,
+    pub fee: U512,
+}
+
 /// Emitted once on settlement with the final execution report.
 #[odra::event]
 pub struct Settled {

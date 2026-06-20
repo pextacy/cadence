@@ -88,16 +88,28 @@ impl ExecutionVault {
         self.oracle_max_deviation_bps.set(max_deviation_bps);
     }
 
-    /// Treasury wires the optional protocol-fee module: once set, every recorded
-    /// slice fill accrues a basis-points fee on the realised buy amount to the
-    /// vault's ledger entry on `fee_module` via the `FeeCollector` cross-contract
-    /// interface. Unset by default (no fee accrual). Treasury-only.
+    /// Treasury wires (or repoints) the optional protocol-fee module and activates
+    /// accrual. Once active, every recorded fill accumulates a fee obligation on the
+    /// realised buy amount locally; the treasury or agent later pushes it to
+    /// `fee_module` via `flush_fees` (the only place the cross-contract `accrue_fee`
+    /// call happens). Unset by default (no accrual). Treasury-only.
     ///
     /// The vault must separately be granted the fee-collector role on the module
-    /// (its accrual call asserts that role), otherwise the fee call would revert.
+    /// (its accrual call asserts that role), otherwise only `flush_fees` — never a
+    /// fill — would revert.
     pub(super) fn set_fee_module_impl(&mut self, fee_module: Address) {
         self.assert_treasury();
         self.fee_module.set(fee_module);
+        self.fee_active.set(true);
+    }
+
+    /// Treasury disables protocol-fee accrual (the fail-safe off-switch). Subsequent
+    /// fills accumulate nothing and `flush_fees` reverts `FeeNotActive`. Any base
+    /// already accumulated is retained, so re-enabling via `set_fee_module` and then
+    /// flushing still settles it. Treasury-only.
+    pub(super) fn unset_fee_module_impl(&mut self) {
+        self.assert_treasury();
+        self.fee_active.set(false);
     }
 
     /// Emergency drain. **Treasury only**, and only while the vault is `Paused`.

@@ -6,6 +6,7 @@ use odra::casper_types::U512;
 use odra::prelude::*;
 use odra::ContractRef;
 
+use cadence_access_control::roles;
 use cadence_common::checked::checked_mul;
 use cadence_common::price::implied_price;
 use cadence_common::scale::BPS_DENOMINATOR;
@@ -14,7 +15,7 @@ use cadence_fee_module::FeeCollectorContractRef;
 use cadence_price_oracle::types::OracleAdapterContractRef;
 
 use super::errors::Error;
-use super::events::{DecisionAttested, FillRecorded, SliceExecuted};
+use super::events::{DecisionAttested, FeesFlushed, FillRecorded, SliceExecuted};
 use super::guardrails;
 use super::status::Status;
 use super::storage::ExecutionVault;
@@ -162,9 +163,9 @@ impl ExecutionVault {
             swap_deploy_hash: String::from_utf8(settlement_ref.to_vec()).unwrap_or_default(),
             bought_so_far: bought,
         });
-        // Checks-effects-interactions: all fill state is written above; accrue the
-        // (optional) protocol fee last, as it is an external call.
-        self.accrue_fee_if_configured(bought_amount);
+        // Fee accrual is DECOUPLED: only accumulate the obligation locally (no
+        // external call), so a fee-module fault can never block recording a fill.
+        self.accumulate_fee_if_active(bought_amount);
     }
 
     /// Record realised swap proceeds for a slice and link the on-chain swap deploy
@@ -201,27 +202,70 @@ impl ExecutionVault {
             swap_deploy_hash,
             bought_so_far: bought,
         });
-        // Checks-effects-interactions: all fill state is written above; accrue the
-        // (optional) protocol fee last, as it is an external call.
-        self.accrue_fee_if_configured(bought_amount);
+        // Fee accrual is DECOUPLED from fill recording: this only accumulates the
+        // obligation locally (no external call). On the escrow/off-chain path the
+        // sell asset has already left the vault in the earlier execute_slice tx, so
+        // a fee-module revert here would otherwise permanently brick the fill — the
+        // accumulate-then-flush split makes that impossible.
+        self.accumulate_fee_if_active(bought_amount);
     }
 
-    /// Accrue the protocol fee on a recorded fill's `bought_amount`, but ONLY when
-    /// a fee module is wired (via `set_fee_module`). A no-op when no fee module is
-    /// set or the amount is zero, so every venue/test without a fee module is
-    /// unaffected. Cross-contract call via the `FeeCollector` trait: the vault must
-    /// hold the collector role on the module, and the module skips a zero amount
-    /// (it reverts `ZeroAmount`), so we guard that here too.
-    fn accrue_fee_if_configured(&mut self, bought_amount: U512) {
-        let fee_module = match self.fee_module.get() {
-            Some(addr) => addr,
-            None => return,
-        };
-        if bought_amount.is_zero() {
+    /// Accumulate a recorded fill's `bought_amount` into the pending fee base, but
+    /// ONLY when fee accrual is active (a fee module was wired via `set_fee_module`
+    /// and not since disabled). Purely LOCAL — no external call — so it can never
+    /// revert a legitimate fill. A no-op when inactive or the amount is zero, so
+    /// every venue/test without a fee module is unaffected. The accumulated base is
+    /// pushed to the fee module later, separately, by [`flush_fees_impl`].
+    fn accumulate_fee_if_active(&mut self, bought_amount: U512) {
+        if bought_amount.is_zero() || !self.fee_active.get_or_default() {
             return;
         }
-        FeeCollectorContractRef::new(self.env(), fee_module)
-            .accrue_fee(self.buy_asset.get_or_default(), bought_amount);
+        let pending = self.pending_fee_base.get_or_default();
+        // Mirrors the bought_so_far checked add: a U512 overflow here is
+        // astronomically impossible, and if it somehow occurred it is the same
+        // failure mode the fill's own accounting already reverts on.
+        let updated = match pending.checked_add(bought_amount) {
+            Some(v) => v,
+            None => self.env().revert(Error::Overflow),
+        };
+        self.pending_fee_base.set(updated);
+    }
+
+    /// Push the accumulated protocol-fee obligation to the wired fee module in a
+    /// single cross-contract `accrue_fee` call, then reset the pending base. Callable
+    /// by the agent or the treasury.
+    ///
+    /// This is deliberately a SEPARATE entrypoint from fill recording: it is the
+    /// only place the external fee call happens, so a fee-module fault (revoked
+    /// collector role, a repointed/buggy module, etc.) can only ever fail THIS call
+    /// — leaving `pending_fee_base` intact for a retry — and can never block a fill.
+    /// Reverts [`Error::FeeNotActive`] if accrual is disabled and
+    /// [`Error::NothingToFlush`] if there is nothing accumulated.
+    ///
+    /// Checks-effects-interactions: the pending base is zeroed BEFORE the external
+    /// call, so a revert rolls the zeroing back (preserving the obligation) and a
+    /// re-entrant module can never observe a stale, double-flushable balance.
+    pub(super) fn flush_fees_impl(&mut self) {
+        let caller = self.env().caller();
+        if !self.ac.has_role(roles::AGENT, caller) && !self.ac.has_role(roles::TREASURY, caller) {
+            self.env().revert(Error::NotAgent);
+        }
+        if !self.fee_active.get_or_default() {
+            self.env().revert(Error::FeeNotActive);
+        }
+        let pending = self.pending_fee_base.get_or_default();
+        if pending.is_zero() {
+            self.env().revert(Error::NothingToFlush);
+        }
+        let fee_module = self.fee_module.get_or_revert_with(Error::FeeNotActive);
+        // Effects before interaction.
+        self.pending_fee_base.set(U512::zero());
+        let fee = FeeCollectorContractRef::new(self.env(), fee_module)
+            .accrue_fee(self.buy_asset.get_or_default(), pending);
+        self.env().emit_event(FeesFlushed {
+            base_amount: pending,
+            fee,
+        });
     }
 
     /// Optional oracle cross-check: when an oracle is configured, require this
