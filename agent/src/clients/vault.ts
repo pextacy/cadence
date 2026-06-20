@@ -14,6 +14,7 @@ const GAS_RECORD_FILL = 3_000_000_000;
 const GAS_ATTEST = 2_000_000_000;
 const GAS_SETTLE = 5_000_000_000;
 const GAS_PAUSE = 1_500_000_000;
+const GAS_FLUSH_FEES = 3_000_000_000;
 
 export interface VaultClientOptions {
   nodeRpcUrl: string;
@@ -155,5 +156,17 @@ export class VaultClient {
 
   async settle(): Promise<string> {
     return this.send("settle", Args.fromMap({}), GAS_SETTLE);
+  }
+
+  /**
+   * Push the locally accumulated protocol-fee base to the wired fee module.
+   * Recorded fills only accrue a fee obligation in-vault; this decoupled
+   * entrypoint performs the actual cross-contract fee push. It is agent- or
+   * treasury-callable and reverts benignly when there is nothing to do:
+   * `FeeNotActive` (error 25) if no fee module is wired, `NothingToFlush`
+   * (error 26) if nothing is accumulated. Callers treat those as no-ops.
+   */
+  async flushFees(): Promise<string> {
+    return this.send("flush_fees", Args.fromMap({}), GAS_FLUSH_FEES);
   }
 }

@@ -13,7 +13,7 @@ import {
 } from "./executor/circuit-breaker/breaker.js";
 import { realisedVolatilityBps } from "./executor/circuit-breaker/volatility.js";
 import { loadSignedMandate, toRuntimeMandate } from "./mandate.js";
-import { buildSnapshot, log, sleep, submissionDelayMs, TARGET_SLICES, PRICE_HISTORY_MAX } from "./runtime.js";
+import { buildSnapshot, flushFeesBestEffort, log, sleep, submissionDelayMs, TARGET_SLICES, PRICE_HISTORY_MAX } from "./runtime.js";
 import type { MarketSnapshot, RuntimeMandate, VaultState } from "./types.js";
 import { FileStateStore, defaultStateDir } from "./state/store.js";
 import { resolveStartupState } from "./state/reconcile.js";
@@ -284,6 +284,10 @@ export async function runAgent(): Promise<void> {
         detail: { settleTx, completed, sold: state.soldSoFar.toString() },
         tsMs: Date.now(),
       });
+      // Opportunistically push accrued protocol fees once the run has settled.
+      // Non-essential bookkeeping: a flush revert (FeeNotActive/NothingToFlush)
+      // or any error is swallowed and logged so it can never block the run.
+      await flushFeesBestEffort(vault, { trackId });
     } else {
       log("settle_skipped", {
         reason: "vault paused before completion/deadline; left for treasury",

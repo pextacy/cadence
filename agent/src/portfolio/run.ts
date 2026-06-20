@@ -12,7 +12,7 @@ import {
 } from "../executor/circuit-breaker/breaker.js";
 import { realisedVolatilityBps } from "../executor/circuit-breaker/volatility.js";
 import { loadSignedMandate, toRuntimeMandate } from "../mandate.js";
-import { buildSnapshot, log, sleep, TARGET_SLICES, PRICE_HISTORY_MAX } from "../runtime.js";
+import { buildSnapshot, flushFeesBestEffort, log, sleep, TARGET_SLICES, PRICE_HISTORY_MAX } from "../runtime.js";
 import type { MarketSnapshot, VaultState } from "../types.js";
 import { Portfolio } from "./manager.js";
 import { loadPortfolioManifest } from "./manifest.js";
@@ -201,6 +201,10 @@ export async function runPortfolio(): Promise<void> {
         // below) if it is not actually settleable yet.
         const settleTx = await rt.vault.settle();
         log("settled", { id: track.id, settleTx });
+        // Push this track's accrued protocol fees once it has settled. Best
+        // effort: a benign FeeNotActive/NothingToFlush (or any error) is
+        // swallowed and logged so it never blocks the remaining tracks.
+        await flushFeesBestEffort(rt.vault, { id: track.id });
       } catch (err) {
         log("settle_skipped", { id: track.id, reason: err instanceof Error ? err.message : String(err) });
       }

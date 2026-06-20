@@ -1,5 +1,6 @@
 import type { Config } from "./config.js";
 import type { CsprTradeClient } from "./clients/csprTrade.js";
+import type { VaultClient } from "./clients/vault.js";
 import { fetchWithX402 } from "./clients/x402.js";
 import { priceFixed } from "./units.js";
 import type { MarketSnapshot } from "./types.js";
@@ -18,6 +19,36 @@ export function log(event: string, detail: Record<string, unknown> = {}): void {
 
 /** Promise-based sleep. */
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Opportunistically push the vault's accumulated protocol fee to the wired fee
+ * module via the decoupled `flush_fees` entrypoint, after a run finalises.
+ *
+ * Fee flushing is non-essential bookkeeping (CLAUDE.md §4.6 fail-safe): a fee
+ * that did not flush is acceptable, a broken/blocked run is not. So EVERY error
+ * is swallowed and logged as an informational no-op — never rethrown. In
+ * particular `FeeNotActive` (no fee module wired) and `NothingToFlush` (nothing
+ * accumulated) are the expected benign reverts and must not surface as failures.
+ *
+ * Side-effecting on-chain call kept deterministic in shape (single attempt, no
+ * retry/randomness) and audited via the same structured `log` the loop uses.
+ */
+export async function flushFeesBestEffort(
+  vault: Pick<VaultClient, "flushFees">,
+  detail: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    const flushTx = await vault.flushFees();
+    log("fees_flushed", { ...detail, flushTx });
+  } catch (err) {
+    // Benign "nothing to do" (FeeNotActive/NothingToFlush) and any other flush
+    // failure are non-fatal: log and continue so settlement is never blocked.
+    log("fees_flush_skipped", {
+      ...detail,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 /**
  * The bounded delay (ms) to wait before submitting a slice the planner scheduled

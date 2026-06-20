@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { submissionDelayMs } from "./runtime.js";
+import { flushFeesBestEffort, submissionDelayMs } from "./runtime.js";
 
 describe("submissionDelayMs", () => {
   const now = 1_000_000;
@@ -29,5 +29,15 @@ describe("submissionDelayMs", () => {
   it("treats a non-finite scheduled time as due now (never blocks)", () => {
     expect(submissionDelayMs(Number.NaN, now, deadline)).toBe(0);
     expect(submissionDelayMs(Number.POSITIVE_INFINITY, now, deadline)).toBe(0);
+  });
+});
+
+describe("flushFeesBestEffort", () => {
+  it("swallows a benign FeeNotActive/NothingToFlush revert and never rethrows", async () => {
+    const vault = {
+      flushFees: () => Promise.reject(new Error("User error: 26 (NothingToFlush)")),
+    };
+    // Must resolve (no throw): a failed flush can never block settlement.
+    await expect(flushFeesBestEffort(vault)).resolves.toBeUndefined();
   });
 });
