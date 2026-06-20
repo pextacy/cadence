@@ -13,6 +13,7 @@ import {
   requireEnv,
 } from "./lib/casper.js";
 import { confirmTransaction } from "./lib/confirm.js";
+import { assertDeployTargetAllowed } from "./lib/network-guard.js";
 import {
   findRecord,
   loadManifest,
@@ -45,6 +46,9 @@ export interface FundResult {
  * confirmed install record.
  */
 export async function fundVault(): Promise<FundResult> {
+  // Deploy-safety: never fund on mainnet without an explicit opt-in.
+  assertDeployTargetAllowed(process.env.CASPER_NETWORK ?? "testnet", process.env.ALLOW_MAINNET === "true");
+
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";

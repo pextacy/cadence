@@ -17,6 +17,7 @@ import {
   requireEnv,
 } from "./lib/casper.js";
 import { confirmTransaction } from "./lib/confirm.js";
+import { assertDeployTargetAllowed } from "./lib/network-guard.js";
 import {
   findRecord,
   loadManifest,
@@ -48,6 +49,9 @@ export interface DeployResult {
  *    `confirmed` / `failed`. Throws on on-chain revert or timeout.
  */
 export async function deployVault(): Promise<DeployResult> {
+  // Deploy-safety: never install to mainnet without an explicit opt-in.
+  assertDeployTargetAllowed(process.env.CASPER_NETWORK ?? "testnet", process.env.ALLOW_MAINNET === "true");
+
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
   const wasmPath = process.env.VAULT_WASM_PATH ?? "../contracts/vault/wasm/ExecutionVault.wasm";

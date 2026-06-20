@@ -4,6 +4,7 @@ import { runAgent } from "@cadence/agent";
 import { deployVault } from "./deploy.js";
 import { fundVault } from "./fund.js";
 import { log } from "./lib/casper.js";
+import { assertDeployTargetAllowed } from "./lib/network-guard.js";
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -23,6 +24,9 @@ async function exists(path: string): Promise<boolean> {
  *   3. Otherwise fund the vault and run the agent end to end on the testnet pair.
  */
 async function main(): Promise<void> {
+  // Deploy-safety: fail fast before any deploy/fund if mainnet isn't opted in.
+  assertDeployTargetAllowed(process.env.CASPER_NETWORK ?? "testnet", process.env.ALLOW_MAINNET === "true");
+
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
   if (!(await exists(signedPath))) {
     throw new Error(`No signed mandate at ${signedPath}. Run: npm run sign-mandate -w @cadence/scripts`);

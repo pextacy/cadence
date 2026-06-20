@@ -46,6 +46,68 @@ jobs:
         run: npm run build
 
   # ---------------------------------------------------------------------------
+  # Dashboard E2E (Playwright). The dashboard imports @cadence/mandate, so that
+  # workspace is built first. Playwright runs headless in CI; the HTML report is
+  # uploaded on failure for debugging.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: Dashboard E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Build mandate workspace (dashboard imports @cadence/mandate)
+        run: npm run build -w @cadence/mandate
+
+      - name: Install Playwright browser (chromium + deps)
+        run: npm run test:e2e:install -w @cadence/dashboard
+
+      - name: Run Playwright E2E (headless)
+        run: npm run test:e2e -w @cadence/dashboard
+        env:
+          CI: "true"
+
+      - name: Upload Playwright HTML report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: dashboard/playwright-report/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Docker build. Builds the multi-stage runtime image (no push) to validate the
+  # workspace-symlink prod-prune resolves at build time. GHA cache speeds reruns.
+  # ---------------------------------------------------------------------------
+  docker:
+    name: Docker build (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
   # Rust / Odra contracts. Toolchain is pinned by contracts/rust-toolchain
   # (nightly-2026-01-01). binaryen (wasm-opt) + wabt (wasm-strip) are required by
   # build-wasm.sh to lower the artifacts to Casper-accepted MVP wasm.
