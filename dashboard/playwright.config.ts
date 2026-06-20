@@ -30,7 +30,10 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? "line" : "list",
+  // In CI, emit the concise `line` reporter to the log AND an HTML report into
+  // the default `playwright-report/` dir (matched by the CI upload step).
+  // `open: "never"` keeps the runner from trying to launch a browser in CI.
+  reporter: process.env.CI ? [["line"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: BASE_URL,
     headless: true,
@@ -49,6 +52,10 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       DASHBOARD_PORT: String(PORT),
+      // Signals the Vite config to bind the exact port (strictPort) so the dev
+      // server fails fast on a clash instead of falling forward to another port
+      // while Playwright polls the fixed `url` above (→ hang/timeout).
+      E2E: "1",
       ...TEST_ENV,
     },
   },
