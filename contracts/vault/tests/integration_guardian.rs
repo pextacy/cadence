@@ -78,6 +78,58 @@ fn guardian_pauses_real_vaults_desk_wide() {
 }
 
 #[test]
+fn global_pause_tolerates_a_vault_already_paused_out_of_band() {
+    // Robustness: the registry view can lag the vault's live status. Here the
+    // vault's own treasury trips the breaker on vault_a BEFORE the desk-wide
+    // sweep runs, while the registry still reports it `Active`. The Guardian's
+    // `should_act` therefore issues a real `pause()` to an already-`Paused`
+    // vault. Because the vault's `pause` is idempotent, the fan-out must not
+    // revert — the whole sweep completes and both vaults end up Paused.
+    let env = odra_test::env();
+    let treasury = env.get_account(0);
+
+    env.set_caller(treasury);
+    let mut registry = VaultRegistry::deploy(&env, NoArgs);
+
+    let mut vault_a = try_deploy(&env, happy_args(treasury)).expect("vault a deploys");
+    let mut vault_b = try_deploy(&env, happy_args(treasury)).expect("vault b deploys");
+    env.set_caller(treasury);
+    vault_a.with_tokens(U512::from(TOTAL_SELL)).fund();
+    vault_b.with_tokens(U512::from(TOTAL_SELL)).fund();
+
+    // Register both — the registry records them `Active`.
+    env.set_caller(treasury);
+    registry.register(vault_a.contract_address(), treasury, [1u8; 32]);
+    registry.register(vault_b.contract_address(), treasury, [2u8; 32]);
+
+    let mut guardian = Guardian::deploy(
+        &env,
+        GuardianInitArgs {
+            registry: registry.contract_address(),
+        },
+    );
+    env.set_caller(treasury);
+    vault_a.set_guardian(guardian.contract_address());
+    vault_b.set_guardian(guardian.contract_address());
+
+    // Out-of-band pause on vault_a: the registry still says Active, but the vault
+    // is now Paused. The sweep will still try to pause it.
+    env.set_caller(treasury);
+    vault_a.pause();
+    assert_eq!(vault_a.get_status(), Status::Paused);
+
+    // The desk-wide sweep must NOT revert on the already-paused vault.
+    env.set_caller(treasury);
+    let affected = guardian.global_pause(0, 10);
+
+    // Both records read Active in the registry, so both warranted a call; the
+    // redundant one on vault_a was absorbed as a no-op rather than reverting.
+    assert_eq!(affected, 2, "the sweep covers both registry-Active vaults");
+    assert_eq!(vault_a.get_status(), Status::Paused);
+    assert_eq!(vault_b.get_status(), Status::Paused);
+}
+
+#[test]
 fn vault_rejects_pause_from_an_unwired_guardian() {
     // Sanity: the cross-contract pause only works because the role was wired. A
     // guardian the vault never granted GUARDIAN to cannot pause it.

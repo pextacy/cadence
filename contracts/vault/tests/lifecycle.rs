@@ -226,3 +226,53 @@ fn execute_slice_blocked_while_halted() {
         .unwrap_err();
     assert_eq!(err, Error::NotActive.into());
 }
+
+#[test]
+fn pause_is_idempotent_when_already_paused() {
+    // The desk-wide Guardian fan-out relies on pause being a no-op (not a revert)
+    // when a vault is already Paused — e.g. the vault's own agent tripped the
+    // breaker before the sweep reached it. A second pause must succeed and leave
+    // the status unchanged.
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    fx.env.set_caller(fx.treasury);
+    fx.contract.pause();
+    assert_eq!(fx.contract.get_status(), Status::Paused);
+
+    // Re-pausing must NOT revert, and the status stays Paused.
+    fx.env.set_caller(fx.treasury);
+    fx.contract.try_pause().expect("re-pausing is a no-op");
+    assert_eq!(fx.contract.get_status(), Status::Paused);
+}
+
+#[test]
+fn resume_is_idempotent_when_already_active() {
+    // Mirror of the pause case: a desk-wide global_resume must tolerate a vault
+    // that is already Active without aborting the sweep.
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    assert_eq!(fx.contract.get_status(), Status::Active);
+
+    // Resuming an Active vault is a no-op, not a revert.
+    fx.env.set_caller(fx.treasury);
+    fx.contract.try_resume().expect("resuming Active is a no-op");
+    assert_eq!(fx.contract.get_status(), Status::Active);
+}
+
+#[test]
+fn pause_still_reverts_from_a_non_pausable_state() {
+    // Idempotency only swallows the already-in-target-state case. Pausing a
+    // terminal (Halted) vault must still revert NotActive — the no-op path must
+    // not silently accept a meaningless pause on a dead vault.
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    fx.env.set_caller(fx.treasury);
+    fx.contract.pause();
+    fx.env.set_caller(fx.treasury);
+    fx.contract.emergency_withdraw();
+    assert_eq!(fx.contract.get_status(), Status::Halted);
+
+    fx.env.set_caller(fx.treasury);
+    let err = fx.contract.try_pause().unwrap_err();
+    assert_eq!(err, Error::NotActive.into());
+}

@@ -13,23 +13,44 @@ use super::storage::ExecutionVault;
 impl ExecutionVault {
     /// Circuit-breaker: pause execution. Agent, treasury, or GUARDIAN may call
     /// (the GUARDIAN role lets the desk-wide Guardian contract pause this vault).
+    ///
+    /// **Idempotent:** pausing an already-`Paused` vault is a no-op, not a revert.
+    /// The desk-wide [`Guardian`](cadence_guardian) fan-out relies on this — its
+    /// registry view can lag the vault's live status (e.g. the vault's own agent
+    /// tripped the breaker first), and a revert on one vault would abort the whole
+    /// sweep. Only non-pausable states (`Funded`/terminal) still revert
+    /// [`Error::NotActive`].
     pub(super) fn pause_impl(&mut self) {
         self.assert_can_pause();
-        if self.read_status() != Status::Active {
-            self.env().revert(Error::NotActive);
+        match self.read_status() {
+            // Already paused: no-op (no state change, no event) so a desk-wide
+            // sweep that re-covers this vault does not revert.
+            Status::Paused => {}
+            Status::Active => {
+                self.status.set(Status::Paused);
+                self.env().emit_event(StatusChanged { paused: true });
+            }
+            _ => self.env().revert(Error::NotActive),
         }
-        self.status.set(Status::Paused);
-        self.env().emit_event(StatusChanged { paused: true });
     }
 
     /// Resume after a pause. Agent, treasury, or GUARDIAN may call.
+    ///
+    /// **Idempotent** mirror of [`pause_impl`](Self::pause_impl): resuming an
+    /// already-`Active` vault is a no-op so a desk-wide `global_resume` fan-out
+    /// tolerates status drift. Only non-resumable states (`Funded`/terminal) revert
+    /// [`Error::NotActive`].
     pub(super) fn resume_impl(&mut self) {
         self.assert_can_pause();
-        if self.read_status() != Status::Paused {
-            self.env().revert(Error::NotActive);
+        match self.read_status() {
+            // Already active: no-op so a desk-wide resume sweep does not revert.
+            Status::Active => {}
+            Status::Paused => {
+                self.status.set(Status::Active);
+                self.env().emit_event(StatusChanged { paused: false });
+            }
+            _ => self.env().revert(Error::NotActive),
         }
-        self.status.set(Status::Active);
-        self.env().emit_event(StatusChanged { paused: false });
     }
 
     /// Treasury wires (or rotates) the GUARDIAN role to `guardian` — typically the

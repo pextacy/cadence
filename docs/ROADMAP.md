@@ -17,7 +17,7 @@ starts.
 | 1 | Decompose every crate by concern + golden-vector preimage tests | ✅ Done |
 | 2a | Compose `AccessControl` into the vault (RBAC + `set_guardian`) | ✅ Done |
 | 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (fees + escrow-attestation path remain) |
-| 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (idempotent-pause robustness remains) |
+| 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (incl. idempotent pause/resume — sweep tolerates status drift) |
 | 4 | `VaultFactory` + `VaultRegistry` create/register flow | ✅ Contracts done+tested (deploy-script call is testnet-gated) |
 | 5 | `OracleAggregator` band cross-check + `TreasuryMultisig` | ✅ Oracle cross-check done; multisig contract done, gating is a design choice |
 | 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (incl. on-chain startup reconciliation + finality-gating) |
@@ -113,12 +113,15 @@ guardian contract, and proves one `global_pause` fans out a cross-contract
 fan-out reverts), confirming the GUARDIAN-role authorization is load-bearing. The
 `VaultControl` trait (`pause`/`resume`, no args) matches the vault's entrypoints.
 
-**Remaining (robustness):** the real vault's `pause` reverts (`NotActive`) if a
-vault is already paused, while the guardian's `VaultControl` contract *assumes*
-idempotent pause. A fan-out whose registry says `Active` but whose vault is
-actually `Paused` would revert the whole sweep. Fix options: make the vault's
-`pause` idempotent (no-op when already `Paused`), or have the guardian read live
-vault status / tolerate per-vault reverts. Out of scope for the happy-path proof.
+**Robustness — DONE.** The vault's `pause`/`resume` (`vault/src/vault/admin.rs`)
+are now **idempotent**: pausing an already-`Paused` vault (or resuming an already-
+`Active` one) is a no-op, not a revert — matching the contract the guardian's
+docs already advertised and relied on. Non-pausable states (`Funded`/terminal)
+still revert `NotActive`. This closes the drift hazard where the registry reports
+`Active` but the vault was already paused out-of-band (e.g. its own agent tripped
+the breaker): the desk-wide sweep absorbs the redundant call instead of aborting.
+Proven by `vault/tests/lifecycle.rs` (idempotent pause/resume + still-reverts-when-
+terminal) and `vault/tests/integration_guardian.rs::global_pause_tolerates_a_vault_already_paused_out_of_band`.
 
 ---
 
