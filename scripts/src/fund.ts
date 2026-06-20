@@ -46,11 +46,17 @@ export interface FundResult {
  * confirmed install record.
  */
 export async function fundVault(): Promise<FundResult> {
-  // Deploy-safety: never fund on mainnet without an explicit opt-in.
-  assertDeployTargetAllowed(process.env.CASPER_NETWORK ?? "testnet", process.env.ALLOW_MAINNET === "true");
-
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
+
+  // Deploy-safety: never fund on mainnet without an explicit opt-in. Inspect the
+  // *effective* resolved target (network + chain name + node RPC) so a mainnet
+  // chain name / node RPC under a "testnet" CASPER_NETWORK is still caught.
+  assertDeployTargetAllowed(
+    { network: process.env.CASPER_NETWORK ?? "testnet", chainName, nodeRpc },
+    process.env.ALLOW_MAINNET === "true",
+  );
+
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
   const treasuryKey = loadSecp256k1(requireEnv("TREASURY_PRIVATE_KEY"));
 

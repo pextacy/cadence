@@ -3,7 +3,7 @@ import { access } from "node:fs/promises";
 import { runAgent } from "@cadence/agent";
 import { deployVault } from "./deploy.js";
 import { fundVault } from "./fund.js";
-import { log } from "./lib/casper.js";
+import { log, networkChainName, networkNodeRpc } from "./lib/casper.js";
 import { assertDeployTargetAllowed } from "./lib/network-guard.js";
 
 async function exists(path: string): Promise<boolean> {
@@ -25,7 +25,16 @@ async function exists(path: string): Promise<boolean> {
  */
 async function main(): Promise<void> {
   // Deploy-safety: fail fast before any deploy/fund if mainnet isn't opted in.
-  assertDeployTargetAllowed(process.env.CASPER_NETWORK ?? "testnet", process.env.ALLOW_MAINNET === "true");
+  // Inspect the *effective* resolved target (network + chain name + node RPC) so a
+  // mainnet chain name / node RPC under a "testnet" CASPER_NETWORK is still caught.
+  assertDeployTargetAllowed(
+    {
+      network: process.env.CASPER_NETWORK ?? "testnet",
+      chainName: networkChainName(),
+      nodeRpc: networkNodeRpc(),
+    },
+    process.env.ALLOW_MAINNET === "true",
+  );
 
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
   if (!(await exists(signedPath))) {

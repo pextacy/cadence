@@ -49,11 +49,17 @@ export interface DeployResult {
  *    `confirmed` / `failed`. Throws on on-chain revert or timeout.
  */
 export async function deployVault(): Promise<DeployResult> {
-  // Deploy-safety: never install to mainnet without an explicit opt-in.
-  assertDeployTargetAllowed(process.env.CASPER_NETWORK ?? "testnet", process.env.ALLOW_MAINNET === "true");
-
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
+
+  // Deploy-safety: never install to mainnet without an explicit opt-in. Inspect the
+  // *effective* resolved target (network + chain name + node RPC) so a mainnet
+  // chain name / node RPC under a "testnet" CASPER_NETWORK is still caught.
+  assertDeployTargetAllowed(
+    { network: process.env.CASPER_NETWORK ?? "testnet", chainName, nodeRpc },
+    process.env.ALLOW_MAINNET === "true",
+  );
+
   const wasmPath = process.env.VAULT_WASM_PATH ?? "../contracts/vault/wasm/ExecutionVault.wasm";
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
   const agentAccountHash = requireEnv("AGENT_ACCOUNT_HASH"); // "account-hash-…"
