@@ -16,12 +16,12 @@ starts.
 | 0 | `cadence-common` shared math | ✅ Done |
 | 1 | Decompose every crate by concern + golden-vector preimage tests | ✅ Done |
 | 2a | Compose `AccessControl` into the vault (RBAC + `set_guardian`) | ✅ Done |
-| 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (fees + escrow-attestation path remain) |
+| 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (incl. optional fee accrual on fill; escrow-attestation wiring remains) |
 | 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (incl. idempotent pause/resume — sweep tolerates status drift) |
 | 4 | `VaultFactory` + `VaultRegistry` create/register flow | ✅ Contracts done+tested (deploy-script call is testnet-gated) |
 | 5 | `OracleAggregator` band cross-check + `TreasuryMultisig` | ✅ Oracle cross-check done; multisig contract done, gating is a design choice |
 | 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (incl. on-chain startup reconciliation + finality-gating) |
-| X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | ⏳ Pending |
+| X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | 🟡 Dashboard E2E + CI docker/e2e jobs + mainnet deploy guard done; live testnet smoke remains |
 
 Legend: ✅ done · 🟡 components exist & unit-tested but not yet integrated across
 contracts · ⏳ not started.
@@ -49,8 +49,17 @@ contracts · ⏳ not started.
   the same call. Backward compatible (direct transfer stays the default).
   `tests/integration_adapter.rs` proves end-to-end atomic settlement to the
   treasury. Found+fixed an Odra by-name cross-contract dispatch bug (adapter param
-  names must match the trait). *Remaining:* fee accrual on fill + the
-  escrow/signed-attestation path for off-chain (cspr.trade) venues.
+  names must match the trait). **Fee accrual on fill — DONE:** a treasury-only
+  `set_fee_module` wires an optional `FeeModule`; once set, every recorded fill
+  accrues a bps fee on the realised buy amount via the `FeeCollector`
+  cross-contract interface (last, after state writes — checks-effects-
+  interactions). Unset by default, so existing venues are unaffected;
+  `tests/integration_fee.rs` proves the accrued amount and the zero-accrual
+  control. *Remaining:* the escrow/signed-attestation path for off-chain
+  (cspr.trade) venues — the `SettlementAdapter` already implements
+  attestation-gated `record_settlement`, but how the vault consumes that
+  settlement (vs today's agent-submitted `record_fill`) is a product decision
+  left undecided rather than guessed (CLAUDE.md §4.7).
 - **Wave 6** — `runAgent` uses the ops layer: `FileStateStore` snapshots per tick
   + resume-on-restart, `InProcessMetrics` counters, a hash-chained `FileAuditLog`,
   an opt-in `HealthServer` (`HEALTH_PORT`), and `InProcessNonceManager`
@@ -214,12 +223,19 @@ snapshot, fill blocked on unconfirmed swap, and nonce serialization across track
   went `unused` under the wasm build cfg now reference the error type by full path
   (no standalone `use`), so no crate emits an unused-import warning.
 - **CI/release:** ✅ `dtolnay/rust-toolchain` is pinned to a SHA (not `@master`).
-  The Docker prod-prune resolves `@cadence/mandate` via the workspace symlink
-  (runtime copies `mandate/dist` + manifest); full verification still wants a real
-  `docker build`.
-- **Deploy safety / E2E:** finality polling + deployment manifest land in
-  `scripts` (done); add the Playwright E2E over the dashboard CreateMandate→sign
-  flow and a testnet smoke once the contract surface settles.
+  CI now also runs a **`docker` job** (real `docker build`, no push, gha-cached) so
+  the prod-prune workspace-symlink resolution (`@cadence/mandate` via `mandate/dist`
+  + manifest) is verified on every PR, and an **`e2e` job** running the dashboard
+  Playwright suite (report uploaded on failure). Verified locally: the image
+  builds (325 MB), and the agent boots and **fails closed** with a structured
+  `{"event":"fatal",…}` error on missing config — closing the long-open
+  "wants a real `docker build`" item.
+- **Deploy safety / E2E:** ✅ finality polling + deployment manifest in `scripts`;
+  a **mainnet guard** (`assertDeployTargetAllowed`) now refuses a mainnet
+  deploy/fund/demo unless `ALLOW_MAINNET=true` (testnet unchanged), unit-tested.
+  **Playwright E2E** covers the dashboard CreateMandate→sign flow (client-side, no
+  network) plus LiveExecution/FinalReport over a stubbed CSPR.cloud socket. A live
+  testnet smoke still remains once the contract surface settles.
 - **Testnet:** rebuild `ExecutionVault.wasm` after Wave 2b, then run the
   sign → deploy → fund → run pipeline (needs the real cspr.trade venue/adapter
   address — the #1 thing that silently skips every slice if wrong).
