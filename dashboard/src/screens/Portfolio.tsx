@@ -3,11 +3,15 @@ import { usePortfolioStream } from "../lib/useVaultStream.js";
 import { aggregatePortfolio } from "../lib/portfolio.js";
 import { deriveMetrics } from "../lib/events.js";
 import { formatAmount, formatDuration, formatPrice, shortHash } from "../lib/format.js";
+import { useActivity } from "../lib/useActivity.js";
 import { NonDataState, Stat, StatusBadge } from "../components/ui.js";
 
 export function Portfolio(): JSX.Element {
   const { config, nowMs } = useDesk();
   const { vaults, connection } = usePortfolioStream(config);
+  // Streaming is live-only; backfill the pre-stream view with the vault's real
+  // on-chain history so the screen is never an empty "waiting" state.
+  const activity = useActivity(config.vaultContractHash);
 
   const head = (
     <div className="page-head">
@@ -48,17 +52,72 @@ export function Portfolio(): JSX.Element {
   const summary = aggregatePortfolio(states, nowMs);
   const anyData = states.some((s) => s.status !== "Unknown");
   if (!anyData) {
+    if (connection === "connecting") {
+      return (
+        <div>
+          {head}
+          <NonDataState kind="loading" title="Connecting to CSPR.cloud streaming…" />
+        </div>
+      );
+    }
+    const s = activity.summary;
     return (
       <div>
         {head}
-        <NonDataState
-          kind="loading"
-          title={
-            connection === "connecting"
-              ? "Connecting to CSPR.cloud streaming…"
-              : "Connected. Waiting for the first vault event…"
-          }
-        />
+        <div className="card reveal">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <span className="eyebrow">Live stream connected</span>
+              <h2 style={{ marginTop: 6 }}>Waiting for the next on-chain event</h2>
+            </div>
+            <span className="badge ok"><span className="dot" />Connected</span>
+          </div>
+          <p className="sub" style={{ marginTop: 8 }}>
+            New mandate events appear here the instant they land. Meanwhile, this is the vault's
+            execution so far, read from on-chain activity.
+          </p>
+          <div className="stat-grid" style={{ marginTop: 16 }}>
+            <Stat label="Pair" value={`${config.sellAsset} → ${config.buyAsset}`} />
+            <Stat label="Slices executed" value={s ? String(s.slices) : null} />
+            <Stat label="CSPR sold" value={s ? formatAmount(s.soldMotes, config.sellAsset) : null} unit={config.sellAsset} />
+            <Stat label="Funded" value={s ? (s.funded ? "Yes" : "No") : null} />
+          </div>
+        </div>
+
+        {activity.items && activity.items.length > 0 && (
+          <div className="card reveal" style={{ marginTop: 20 }}>
+            <h2>On-chain activity</h2>
+            <table className="feed" style={{ marginTop: 8 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Action</th>
+                  <th style={{ textAlign: "left" }}>Detail</th>
+                  <th>Result</th>
+                  <th>Deploy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activity.items.map((it) => (
+                  <tr key={it.deployHash}>
+                    <td>{it.action}</td>
+                    <td className="sub">{it.detail}</td>
+                    <td className="num">
+                      <span className={`badge ${it.success ? "ok" : "stop"}`}>
+                        <span className="dot" />
+                        {it.success ? "OK" : "Reverted"}
+                      </span>
+                    </td>
+                    <td className="num">
+                      <a href={`${config.explorerTxBase}${it.deployHash}`} target="_blank" rel="noreferrer" className="mono">
+                        {shortHash(it.deployHash)}
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }

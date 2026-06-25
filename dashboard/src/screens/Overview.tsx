@@ -57,8 +57,8 @@ export function Overview(): JSX.Element {
             <div className="card" style={{ marginBottom: 0 }}>
               <h2>Desk status</h2>
               <p className="sub">
-                No mandate is streaming live this moment — here is the deployed vault's real
-                on-chain activity (the live view fills in as new events arrive).
+                No mandate is executing right now. Below is the deployed vault's real on-chain
+                activity — the live desk takes over automatically the moment fills start streaming.
               </p>
               <div className="stat-grid" style={{ marginTop: 12 }}>
                 <Stat label="Network" value={config.chainName} />
@@ -74,8 +74,8 @@ export function Overview(): JSX.Element {
                 />
               </div>
               <p className="sub" style={{ marginTop: 14 }}>
-                <Link to="/activity">See full on-chain activity →</Link> ·{" "}
-                <Link to="/deployments">Deployed contracts →</Link>
+                <Link to="/activity">View full on-chain activity →</Link> ·{" "}
+                <Link to="/deployments">View deployed contracts →</Link>
               </p>
             </div>
           )}
