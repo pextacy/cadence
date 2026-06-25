@@ -44,7 +44,7 @@ export async function runPortfolio(): Promise<void> {
     process.env.PORTFOLIO_MANIFEST_PATH ?? DEFAULT_MANIFEST_PATH,
   );
 
-  const market = new CsprTradeClient(cfg.csprTradeMcpUrl, "cspr.trade");
+  const market = new CsprTradeClient(cfg.csprTradeMcpUrl, "cspr.trade", cfg.agentPrivateKeyHex);
   await market.connect();
 
   const runtimes = new Map<string, TrackRuntime>();

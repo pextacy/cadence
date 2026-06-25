@@ -43,8 +43,8 @@ const plus = (h: number) => new Date(now.getTime() + h * 3_600_000).toISOString(
 
 const DEFAULTS: Form = {
   sellAsset: "CSPR",
-  buyAsset: "USDC",
-  totalSell: "2000000",
+  buyAsset: "WUSDC",
+  totalSell: "100",
   startLocal: plus(0),
   endLocal: plus(72),
   slippagePct: "1.00",
@@ -52,7 +52,7 @@ const DEFAULTS: Form = {
   priceCeiling: "",
   strategy: "TWAP",
   venue: "cspr.trade",
-  venueAddresses: "",
+  venueAddresses: "hash-6c2bce9b90acb75238b640758b99904b6ff1fc243e765722397e045ac76b8dcb",
   devKey: "",
 };
 

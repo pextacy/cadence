@@ -20,4 +20,9 @@ pub enum Error {
     UnknownIntent = 5,
     /// The factory has not been configured with a vault package-hash yet.
     WasmNotConfigured = 6,
+    /// A multisig approval gate is configured, but the M-of-N owners have not
+    /// approved (and executed) this exact vault-creation action.
+    MultisigApprovalRequired = 7,
+    /// Failed to serialise the create-vault action preimage for hashing.
+    SerializationError = 8,
 }

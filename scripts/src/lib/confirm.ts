@@ -71,7 +71,10 @@ export async function confirmTransaction(
       const blockHeight = executionInfo.blockHeight;
       const cost = result?.cost !== undefined ? String(result.cost) : undefined;
 
-      if (errorMessage !== undefined && errorMessage !== "") {
+      // casper-js-sdk returns `null` (not undefined) for a successful tx's
+      // errorMessage; a truthy check treats null/undefined/"" all as success and
+      // only a non-empty string as a real on-chain revert.
+      if (errorMessage) {
         return {
           transactionHash,
           status: "failure",

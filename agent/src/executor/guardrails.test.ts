@@ -30,7 +30,7 @@ function proposal(over: Partial<SliceProposal> = {}): SliceProposal {
 }
 
 function quote(over: Partial<Quote> = {}): Quote {
-  return { venue: "cspr.trade", venueAddress: VENUE_ADDR, sellAmount: 100_000n, quotedOut: 200_000n, ...over };
+  return { venue: "cspr.trade", venueAddress: VENUE_ADDR, sellAmount: 100_000n, quotedOut: 200_000n, quotedAtMs: NOW, ...over };
 }
 
 describe("validateSlice", () => {

@@ -163,3 +163,14 @@ fn set_price_is_owner_only() {
     let err = fx.adapter.try_set_price(U512::from(PRICE)).unwrap_err();
     assert_eq!(err, Error::NotOwner.into());
 }
+
+#[test]
+fn set_price_rejects_zero() {
+    // A zero price reads as "unset" and would brick every swap until re-set; the
+    // owner must not be able to set it (foot-gun / DoS).
+    let mut fx = setup();
+    let owner = fx.env.get_account(0);
+    fx.env.set_caller(owner);
+    let err = fx.adapter.try_set_price(U512::zero()).unwrap_err();
+    assert_eq!(err, Error::PriceNotSet.into());
+}

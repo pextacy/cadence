@@ -5,6 +5,9 @@
 //! tests deploy both contracts and grant the factory's address the registry writer
 //! role so the cross-contract `register` call succeeds.
 
+use cadence_treasury_multisig::multisig::{
+    TreasuryMultisig, TreasuryMultisigHostRef, TreasuryMultisigInitArgs,
+};
 use cadence_vault_factory::errors::Error;
 use cadence_vault_factory::factory::{VaultFactoryHostRef, VaultFactoryInitArgs};
 use cadence_vault_factory::storage::VaultFactory;
@@ -249,4 +252,99 @@ fn new_wasm_ref_applies_to_subsequent_intents() {
 
     assert_eq!(fx.factory.get_intent(0).unwrap().wasm_ref, wasm_ref());
     assert_eq!(fx.factory.get_intent(1).unwrap().wasm_ref, new_ref);
+}
+
+// ---------------------------------------------------------------------------
+// Optional M-of-N multisig gate over create_vault (Wave 5).
+// ---------------------------------------------------------------------------
+
+/// Deploy a 1-of-1 multisig owned by `owner` and wire it as the factory's gate.
+fn wire_multisig(fx: &mut Fixture, owner: Address) -> TreasuryMultisigHostRef {
+    fx.env.set_caller(owner);
+    let multisig = TreasuryMultisig::deploy(
+        &fx.env,
+        TreasuryMultisigInitArgs {
+            owners: odra::prelude::vec![owner],
+            threshold: 1,
+        },
+    );
+    fx.env.set_caller(fx.admin);
+    fx.factory.set_multisig(multisig.address());
+    assert_eq!(fx.factory.multisig(), Some(multisig.address()));
+    multisig
+}
+
+#[test]
+fn create_vault_is_blocked_until_the_multisig_approves_the_exact_action() {
+    let mut fx = setup();
+    let admin = fx.admin;
+    let mut multisig = wire_multisig(&mut fx, admin);
+
+    // Before any approval, even the FACTORY_ADMIN cannot create the vault.
+    fx.env.set_caller(fx.admin);
+    let err = fx
+        .factory
+        .try_create_vault(fx.vault_1, fx.treasury, fx.agent, mandate(1))
+        .unwrap_err();
+    assert_eq!(err, Error::MultisigApprovalRequired.into());
+
+    // Owners approve the EXACT creation action (the factory-derived hash).
+    let action = fx
+        .factory
+        .create_action_hash(fx.vault_1, fx.treasury, fx.agent, mandate(1));
+    fx.env.set_caller(fx.admin);
+    let id = multisig.propose(action);
+    multisig.approve(id);
+    multisig.execute(id);
+    assert!(multisig.is_action_approved(action));
+
+    // Now the gated creation succeeds and records the intent.
+    fx.env.set_caller(fx.admin);
+    let intent_id = fx
+        .factory
+        .create_vault(fx.vault_1, fx.treasury, fx.agent, mandate(1));
+    assert_eq!(intent_id, 0);
+    assert_eq!(fx.factory.get_intent(0).unwrap().vault, fx.vault_1);
+}
+
+#[test]
+fn multisig_approval_authorises_only_the_approved_action() {
+    // Approval is bound to all four creation params: an approval for vault_1 must
+    // not authorise creating a different vault_2.
+    let mut fx = setup();
+    let admin = fx.admin;
+    let mut multisig = wire_multisig(&mut fx, admin);
+
+    let action_1 = fx
+        .factory
+        .create_action_hash(fx.vault_1, fx.treasury, fx.agent, mandate(1));
+    fx.env.set_caller(fx.admin);
+    let id = multisig.propose(action_1);
+    multisig.approve(id);
+    multisig.execute(id);
+
+    // vault_1 (approved) succeeds...
+    fx.env.set_caller(fx.admin);
+    fx.factory
+        .create_vault(fx.vault_1, fx.treasury, fx.agent, mandate(1));
+
+    // ...but vault_2 (never approved → different hash) is still blocked.
+    fx.env.set_caller(fx.admin);
+    let err = fx
+        .factory
+        .try_create_vault(fx.vault_2, fx.treasury, fx.agent, mandate(2))
+        .unwrap_err();
+    assert_eq!(err, Error::MultisigApprovalRequired.into());
+}
+
+#[test]
+fn create_vault_is_admin_only_when_no_multisig_is_wired() {
+    // Default (no gate): the existing FACTORY_ADMIN-only behaviour is unchanged.
+    let mut fx = setup();
+    assert_eq!(fx.factory.multisig(), None);
+    fx.env.set_caller(fx.admin);
+    let intent_id = fx
+        .factory
+        .create_vault(fx.vault_1, fx.treasury, fx.agent, mandate(1));
+    assert_eq!(intent_id, 0);
 }

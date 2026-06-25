@@ -78,6 +78,14 @@ pub struct ExecutionVault {
     // Per-slice min_out, keyed by slice id, so a fill can be reconciled.
     pub(super) slice_min_out: Mapping<u32, U512>,
     pub(super) slice_filled: Mapping<u32, bool>,
+    // Escrow linkage for off-chain (SettlementAdapter) venues. A slice routed
+    // through an escrow adapter records `is_escrow = true` plus the adapter address
+    // and escrow id here, so its fill is credited from the adapter's
+    // operator-attested settlement (via `record_escrow_fill`) rather than an
+    // agent-supplied amount (`record_fill`, which is rejected for these slices).
+    pub(super) slice_is_escrow: Mapping<u32, bool>,
+    pub(super) slice_escrow_adapter: Mapping<u32, Address>,
+    pub(super) slice_escrow_id: Mapping<u32, u64>,
 
     pub(super) status: Var<Status>,
 
@@ -88,6 +96,14 @@ pub struct ExecutionVault {
     pub(super) oracle: Var<Address>,
     pub(super) oracle_pair: Var<String>,
     pub(super) oracle_max_deviation_bps: Var<u32>,
+
+    // Optional protocol fee accrual. When `fee_module` is set, every recorded fill
+    // accrues the module's current bps fee on the realised buy amount, credited to
+    // `fee_collector` (a distinct protocol account, not the trading treasury). The
+    // module is an accounting ledger only — no funds move here. Unset (the default)
+    // disables fees entirely, so existing mandates are unaffected.
+    pub(super) fee_module: Var<Address>,
+    pub(super) fee_collector: Var<Address>,
 
     /// Role-based access control. Composed (never deployed standalone) so the
     /// vault shares the desk-wide RBAC vocabulary: TREASURY/AGENT/GUARDIAN are

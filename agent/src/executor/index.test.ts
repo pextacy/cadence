@@ -43,6 +43,7 @@ const quote: Quote = {
   venueAddress: "hash-venue",
   sellAmount: 100n,
   quotedOut: 200n,
+  quotedAtMs: 0, // stamped fresh per-call by the fake market below
 };
 
 const SUCCESS: ConfirmationResult = { status: "success", blockHash: "blk", costMotes: "0" };
@@ -54,7 +55,10 @@ interface Calls {
   attest: number;
 }
 
-function makeDeps(confirm: ConfirmationService): { deps: ExecutorDeps; calls: Calls } {
+function makeDeps(
+  confirm: ConfirmationService,
+  quoteOverride: Partial<Quote> = {},
+): { deps: ExecutorDeps; calls: Calls } {
   const calls: Calls = { executeSlice: 0, executeSwap: 0, recordFill: 0, attest: 0 };
   const vault = {
     async executeSlice() {
@@ -70,13 +74,22 @@ function makeDeps(confirm: ConfirmationService): { deps: ExecutorDeps; calls: Ca
       return "attest-tx";
     },
   };
+  // Realised output is read as a buy-asset balance delta across the swap; the fake
+  // bumps the balance by 200 on each successful swap so after-before = 200.
+  let buyBalance = 0n;
   const market = {
     async getQuotes() {
-      return [quote];
+      // Stamp fresh per call so the freshness gate passes unless the test
+      // explicitly overrides quotedAtMs to an older time.
+      return [{ ...quote, quotedAtMs: Date.now(), ...quoteOverride }];
     },
-    async executeSwap() {
+    async swap() {
       calls.executeSwap += 1;
-      return { deployHash: "swap-deploy", boughtAmount: 200n };
+      buyBalance += 200n;
+      return { deployHash: "swap-deploy" };
+    },
+    async tokenBalance() {
+      return buyBalance;
     },
   };
   const deps = {
@@ -107,6 +120,17 @@ describe("Executor confirmation gating", () => {
     const outcome = await new Executor(deps).executeOnce(mandate, state, proposal, Date.now());
     expect(outcome.status).toBe("filled");
     expect(calls).toEqual({ executeSlice: 1, executeSwap: 1, recordFill: 1, attest: 1 });
+  });
+
+  it("skips (without committing) when the quote is stale beyond the TTL", async () => {
+    // Quote stamped 10s ago, default TTL is 5s → stale → skip, no on-chain commit.
+    const { deps, calls } = makeDeps(constantConfirm(SUCCESS), {
+      quotedAtMs: Date.now() - 10_000,
+    });
+    const outcome = await new Executor(deps).executeOnce(mandate, state, proposal, Date.now());
+    expect(outcome.status).toBe("skipped");
+    if (outcome.status === "skipped") expect(outcome.code).toBe("StaleQuote");
+    expect(calls).toEqual({ executeSlice: 0, executeSwap: 0, recordFill: 0, attest: 0 });
   });
 
   it("pauses without swapping when execute_slice reverts on-chain", async () => {
@@ -140,6 +164,59 @@ describe("Executor confirmation gating", () => {
     const outcome = await new Executor(deps).executeOnce(mandate, state, proposal, Date.now());
     expect(outcome.status).toBe("paused");
     expect(calls.executeSwap).toBe(0);
+  });
+
+  it("quarantines a venue out of routing after repeated swap failures", async () => {
+    const T = 5_000_000;
+    let getQuotesCalls = 0;
+    const vault = {
+      async executeSlice() {
+        return "slice-tx";
+      },
+      async recordFill() {
+        return "record-tx";
+      },
+      async attest() {
+        return "attest-tx";
+      },
+    };
+    const market = {
+      async getQuotes() {
+        getQuotesCalls += 1;
+        // Stamp at the injected nowMs so the freshness guard passes; venue-health
+        // uses the same nowMs (T) for its quarantine clock.
+        return [{ ...quote, quotedAtMs: T }];
+      },
+      async swap() {
+        throw new Error("venue swap down");
+      },
+      async tokenBalance() {
+        return 0n;
+      },
+    };
+    const deps = {
+      vault,
+      market,
+      confirm: constantConfirm(SUCCESS),
+      sellToken: "CSPR",
+      buyToken: "USDC",
+      proceedsRecipient: "account-hash-treasury",
+    } as unknown as ExecutorDeps;
+    const executor = new Executor(deps);
+
+    // 3 consecutive swap failures (default maxConsecutiveFailures) → quarantine.
+    for (let i = 0; i < 3; i++) {
+      const out = await executor.executeOnce(mandate, state, proposal, T);
+      expect(out.status).toBe("paused");
+    }
+    expect(getQuotesCalls).toBe(3);
+
+    // 4th attempt: the only venue is cooling → skip before any quote fetch.
+    const out = await executor.executeOnce(mandate, state, proposal, T);
+    expect(out.status).toBe("skipped");
+    if (out.status === "skipped") expect(out.code).toBe("NoHealthyVenue");
+    expect(getQuotesCalls).toBe(3); // no new quote fetch while quarantined
+    expect(executor.venueHealthSnapshot()["cspr.trade"]?.state).toBe("cooling");
   });
 
   it("pauses without recording the fill when the swap deploy is not confirmed", async () => {

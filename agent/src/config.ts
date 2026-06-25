@@ -10,7 +10,9 @@ import { networkPreset } from "@cadence/mandate";
 const ConfigSchema = z.object({
   casperNodeRpc: z.string().url(),
   chainName: z.string().min(1),
-  csprCloudApiKey: z.string().min(1),
+  // Optional: the agent reads chain state via the node RPC and market data via the
+  // CSPR.trade MCP — it does not call CSPR.cloud. Only the dashboard streams from it.
+  csprCloudApiKey: z.string().optional(),
   csprCloudRestUrl: z.string().url(),
   csprCloudStreamingUrl: z.string().min(1),
   csprTradeMcpUrl: z.string().url(),
@@ -52,11 +54,13 @@ export function loadConfig(): Config {
   // any individual URL below can still be overridden by its explicit variable.
   const net = networkPreset(process.env.CASPER_NETWORK);
   const raw = {
-    casperNodeRpc: process.env.CASPER_NODE_RPC ?? net.nodeRpcUrl,
-    chainName: process.env.CASPER_CHAIN_NAME ?? net.chainName,
-    csprCloudApiKey: required("CSPR_CLOUD_API_KEY"),
-    csprCloudRestUrl: process.env.CSPR_CLOUD_REST_URL ?? net.csprCloudRestUrl,
-    csprCloudStreamingUrl: process.env.CSPR_CLOUD_STREAMING_URL ?? net.csprCloudStreamingUrl,
+    // `||` (not `??`) so a blank override in .env falls back to the preset — an
+    // empty string must count as unset, otherwise it defeats the fallback.
+    casperNodeRpc: process.env.CASPER_NODE_RPC?.trim() || net.nodeRpcUrl,
+    chainName: process.env.CASPER_CHAIN_NAME?.trim() || net.chainName,
+    csprCloudApiKey: optional("CSPR_CLOUD_API_KEY"),
+    csprCloudRestUrl: process.env.CSPR_CLOUD_REST_URL?.trim() || net.csprCloudRestUrl,
+    csprCloudStreamingUrl: process.env.CSPR_CLOUD_STREAMING_URL?.trim() || net.csprCloudStreamingUrl,
     csprTradeMcpUrl: process.env.CSPR_TRADE_MCP_URL ?? "https://mcp.cspr.trade",
     casperMcpUrl: optional("CASPER_MCP_URL"),
     x402FacilitatorUrl: optional("X402_FACILITATOR_URL"),
@@ -64,7 +68,7 @@ export function loadConfig(): Config {
     agentPrivateKeyHex: required("AGENT_PRIVATE_KEY"),
     treasuryAccountHash: required("TREASURY_ACCOUNT_HASH"),
     llmApiKey: required("LLM_API_KEY"),
-    llmModel: process.env.LLM_MODEL ?? "claude-sonnet-4-6",
+    llmModel: process.env.LLM_MODEL?.trim() || "gemini-2.5-flash",
     vaultContractHash: required("VAULT_CONTRACT_HASH"),
     vaultPackageHash: optional("VAULT_PACKAGE_HASH"),
     sellAsset: process.env.SELL_ASSET ?? "CSPR",

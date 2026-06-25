@@ -107,3 +107,50 @@ fn vault_rejects_pause_from_an_unwired_guardian() {
     );
     assert_eq!(vault.get_status(), Status::Active, "vault stays Active");
 }
+
+#[test]
+fn fanout_survives_a_vault_already_paused_out_of_band() {
+    // Regression for the Wave 3 robustness gap: the registry reports a vault
+    // `Active`, but its live status has diverged to `Paused` (its own agent, or an
+    // earlier batch, paused it). Because the vault's `pause()` is idempotent, the
+    // guardian's fan-out re-covers it as a no-op instead of reverting the entire
+    // sweep — so the other vaults still get paused.
+    let env = odra_test::env();
+    let treasury = env.get_account(0);
+
+    env.set_caller(treasury);
+    let mut registry = VaultRegistry::deploy(&env, NoArgs);
+
+    let mut vault_a = try_deploy(&env, happy_args(treasury)).expect("vault a deploys");
+    let mut vault_b = try_deploy(&env, happy_args(treasury)).expect("vault b deploys");
+    env.set_caller(treasury);
+    vault_a.with_tokens(U512::from(TOTAL_SELL)).fund();
+    vault_b.with_tokens(U512::from(TOTAL_SELL)).fund();
+
+    // Both registered Active; the guardian wired on each.
+    env.set_caller(treasury);
+    registry.register(vault_a.contract_address(), treasury, [1u8; 32]);
+    registry.register(vault_b.contract_address(), treasury, [2u8; 32]);
+    let mut guardian = Guardian::deploy(
+        &env,
+        GuardianInitArgs {
+            registry: registry.contract_address(),
+        },
+    );
+    env.set_caller(treasury);
+    vault_a.set_guardian(guardian.contract_address());
+    vault_b.set_guardian(guardian.contract_address());
+
+    // Out-of-band: pause vault_a directly so its live status diverges from the
+    // registry's Active record.
+    env.set_caller(treasury);
+    vault_a.pause();
+    assert_eq!(vault_a.get_status(), Status::Paused);
+
+    // The sweep must NOT revert; vault_b is still paused, vault_a stays paused.
+    env.set_caller(treasury);
+    let affected = guardian.global_pause(0, 10);
+    assert_eq!(affected, 2, "both registry-Active records get a pause call");
+    assert_eq!(vault_a.get_status(), Status::Paused, "already-paused vault unchanged");
+    assert_eq!(vault_b.get_status(), Status::Paused, "the other vault is paused");
+}

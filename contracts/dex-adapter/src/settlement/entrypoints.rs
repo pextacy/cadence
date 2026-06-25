@@ -6,10 +6,16 @@ use odra::casper_types::{PublicKey, U512};
 use odra::prelude::*;
 
 use super::errors::Error;
-use super::events::{SettlementRecorded, SwapIntent};
+use super::events::{EscrowRefunded, SettlementRecorded, SwapIntent};
 use super::preimage::settlement_message;
 use super::storage::{Escrow, SettlementAdapter};
 use crate::adapter::SwapReceipt;
+
+/// How long (ms) an escrow must sit unsettled before its recipient may reclaim it
+/// via [`SettlementAdapter::cancel_escrow`]. A generous 24h: settlement is normally
+/// minutes, so this only ever fires when the off-chain swap is genuinely abandoned
+/// (operator offline, key lost), turning a permanent fund-lock into a recoverable one.
+pub const REFUND_TIMEOUT_MS: u64 = 24 * 60 * 60 * 1000;
 
 #[odra::module]
 impl SettlementAdapter {
@@ -54,6 +60,9 @@ impl SettlementAdapter {
                 min_out,
                 recipient,
                 settled: false,
+                bought_amount: U512::zero(),
+                created_at_ms: self.env().get_block_time(),
+                refunded: false,
             },
         );
         self.next_escrow_id.set(escrow_id + 1);
@@ -114,6 +123,11 @@ impl SettlementAdapter {
         if escrow.settled {
             self.env().revert(Error::EscrowAlreadySettled);
         }
+        // A refunded escrow is terminal: its custody has already been returned, so
+        // it can never settle.
+        if escrow.refunded {
+            self.env().revert(Error::EscrowAlreadyRefunded);
+        }
         // 3. realised output must clear the committed floor.
         if bought_amount < escrow.min_out {
             self.env().revert(Error::SlippageTooHigh);
@@ -141,9 +155,11 @@ impl SettlementAdapter {
         {
             self.env().revert(Error::BadSignature);
         }
-        // 6. effects-before-interactions: mark settled and spend the nonce, then
-        //    release the escrowed sell asset to the recipient (the venue/agent leg).
+        // 6. effects-before-interactions: mark settled, record the proven realised
+        //    amount (the vault reads this, not an agent claim), and spend the nonce,
+        //    then release the escrowed sell asset to the recipient (the venue/agent leg).
         escrow.settled = true;
+        escrow.bought_amount = bought_amount;
         let recipient = escrow.recipient;
         let sell_amount = escrow.sell_amount;
         self.escrows.set(&escrow_id, escrow);
@@ -155,6 +171,55 @@ impl SettlementAdapter {
             bought_amount,
             settlement_ref,
             nonce,
+        });
+    }
+
+    /// Reclaim an escrow whose off-chain swap never settled.
+    ///
+    /// Without this, an escrow can only ever leave the adapter through
+    /// [`Self::record_settlement`], which needs a valid operator signature — so if
+    /// the operator goes offline or loses its key, the escrowed sell asset is locked
+    /// in this contract forever (the vault's `emergency_withdraw` only sweeps the
+    /// vault's own balance, never the adapter's). This entrypoint lets the escrow's
+    /// **recipient** (the same account the settlement would have paid) reclaim the
+    /// custodied sell asset once [`REFUND_TIMEOUT_MS`] has elapsed since the escrow
+    /// was booked. It is terminal and mutually exclusive with settlement: a refunded
+    /// escrow can never settle, and a settled escrow can never refund.
+    pub fn cancel_escrow(&mut self, escrow_id: u64) {
+        let mut escrow = match self.escrows.get(&escrow_id) {
+            Some(e) => e,
+            None => self.env().revert(Error::UnknownEscrow),
+        };
+        // Terminal-state guards: a settled or already-refunded escrow cannot refund.
+        if escrow.settled {
+            self.env().revert(Error::EscrowAlreadySettled);
+        }
+        if escrow.refunded {
+            self.env().revert(Error::EscrowAlreadyRefunded);
+        }
+        // Only the recipient (the beneficiary the settlement would have paid) may
+        // reclaim — never an arbitrary caller.
+        if self.env().caller() != escrow.recipient {
+            self.env().revert(Error::NotRefundRecipient);
+        }
+        // The refund window must have elapsed since the escrow was booked. Saturate
+        // so a pathological `created_at_ms` near u64::MAX can never wrap to a small
+        // deadline and open an early refund.
+        let deadline = escrow.created_at_ms.saturating_add(REFUND_TIMEOUT_MS);
+        if self.env().get_block_time() < deadline {
+            self.env().revert(Error::RefundTimeoutNotReached);
+        }
+        // Effects-before-interactions: mark terminal, then return custody.
+        escrow.refunded = true;
+        let recipient = escrow.recipient;
+        let sell_amount = escrow.sell_amount;
+        self.escrows.set(&escrow_id, escrow);
+        self.env().transfer_tokens(&recipient, &sell_amount);
+
+        self.env().emit_event(EscrowRefunded {
+            escrow_id,
+            recipient,
+            sell_amount,
         });
     }
 
@@ -171,4 +236,31 @@ impl SettlementAdapter {
     pub fn attestation_used(&self, operator: Address, nonce: Bytes) -> bool {
         self.used_attestations.get_or_default(&(operator, nonce))
     }
+
+    /// The operator-attested realised fill for an escrow: `(settled, bought_amount)`.
+    ///
+    /// `bought_amount` is the amount proven by a verified operator signature in
+    /// [`Self::record_settlement`]; `(false, 0)` until then (and for an unknown
+    /// escrow). This is the cross-contract read the vault credits to `bought_so_far`
+    /// — it never trusts an agent-supplied amount for an off-chain venue.
+    pub fn settled_fill(&self, escrow_id: u64) -> (bool, U512) {
+        match self.escrows.get(&escrow_id) {
+            Some(e) => (e.settled, e.bought_amount),
+            None => (false, U512::zero()),
+        }
+    }
+}
+
+/// The cross-contract read surface the vault uses to confirm an escrow's
+/// operator-attested fill before crediting it.
+///
+/// Declared `#[odra::external_contract]` so the vault can build a
+/// `SettlementProofContractRef::new(env, adapter_addr)` from a resolved `Address`
+/// and read `settled_fill` without depending on the concrete adapter type. The
+/// dispatch is by entrypoint name, so the method name here MUST match the
+/// `settled_fill` entrypoint above.
+#[odra::external_contract]
+pub trait SettlementProof {
+    /// `(settled, bought_amount)` — the operator-attested realised fill.
+    fn settled_fill(&self, escrow_id: u64) -> (bool, U512);
 }

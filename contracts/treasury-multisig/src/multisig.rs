@@ -50,6 +50,23 @@ pub struct TreasuryMultisig {
     proposals: Mapping<u64, Proposal>,
     /// Per-proposal, per-owner approval flag: `(id, owner) -> approved?`.
     approvals: Mapping<(u64, Address), bool>,
+    /// Action-hash -> executed flag. Set when a proposal for that hash reaches the
+    /// threshold and is executed, so a downstream contract (e.g. the VaultFactory)
+    /// can verify M-of-N approval of an action by its hash, without knowing the
+    /// proposal id. Once true it stays true (the action was authorised).
+    executed_actions: Mapping<[u8; 32], bool>,
+}
+
+/// Cross-contract read surface a downstream gate (e.g. the VaultFactory) uses to
+/// confirm an action was approved M-of-N and executed here.
+///
+/// Declared `#[odra::external_contract]` so a caller holding only this multisig's
+/// `Address` can build a `MultisigApprovalContractRef::new(env, addr)` and read
+/// `is_action_approved`. The method name MUST match the entrypoint below.
+#[odra::external_contract]
+pub trait MultisigApproval {
+    /// Whether an action with `action_hash` has been approved (M-of-N) and executed.
+    fn is_action_approved(&self, action_hash: [u8; 32]) -> bool;
 }
 
 #[odra::module]
@@ -196,11 +213,20 @@ impl TreasuryMultisig {
                 ..proposal
             },
         );
+        // Index the executed action by hash so a downstream gate can verify M-of-N
+        // approval without knowing the proposal id.
+        self.executed_actions.set(&action_hash, true);
         self.env().emit_event(Executed {
             id,
             action_hash,
             approvals,
         });
+    }
+
+    /// Whether an action with `action_hash` has been approved M-of-N and executed
+    /// here. The cross-contract gate read backing [`MultisigApproval`].
+    pub fn is_action_approved(&self, action_hash: [u8; 32]) -> bool {
+        self.executed_actions.get_or_default(&action_hash)
     }
 
     // ----- read-only views -----

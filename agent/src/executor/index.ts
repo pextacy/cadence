@@ -4,6 +4,8 @@ import type { ConfirmationService } from "../clients/confirm.js";
 import type { Quote, RuntimeMandate, SliceProposal, VaultState } from "../types.js";
 import { selectBestQuote } from "../routing/best-execution.js";
 import { validateSlice, type GuardrailCode } from "./guardrails.js";
+import { checkFreshness, type FreshnessConfig } from "./quote-freshness.js";
+import { VenueHealthTracker, type VenueHealthConfig } from "./venue-health.js";
 
 export type ExecOutcome =
   | {
@@ -16,7 +18,7 @@ export type ExecOutcome =
       boughtAmount: bigint;
       minOut: bigint;
     }
-  | { status: "skipped"; code: GuardrailCode; message: string }
+  | { status: "skipped"; code: GuardrailCode | "StaleQuote" | "NoHealthyVenue"; message: string }
   | { status: "paused"; reason: string };
 
 export interface ExecutorDeps {
@@ -30,6 +32,12 @@ export interface ExecutorDeps {
   /** Recipient of swap proceeds — the treasury's Casper account (non-custodial;
    * the agent never receives funds). */
   proceedsRecipient: string;
+  /** Quote freshness TTL; a quote older than this at commit time is rejected and
+   * the slice is skipped so the loop refetches. Defaults to the module default. */
+  freshness?: FreshnessConfig;
+  /** Per-venue health breaker config; a venue is quarantined out of routing after
+   * repeated quote/swap failures. Defaults to the module default. */
+  venueHealth?: VenueHealthConfig;
 }
 
 /** Sleep helper for backoff. */
@@ -67,7 +75,18 @@ export async function withRetry<T>(
  * guessing — fail safe, not open.
  */
 export class Executor {
-  constructor(private readonly deps: ExecutorDeps) {}
+  /** Per-venue health breaker, folded across this run's quote/swap outcomes so a
+   * venue that repeatedly fails is quarantined out of routing for a cooldown. */
+  private health: VenueHealthTracker;
+
+  constructor(private readonly deps: ExecutorDeps) {
+    this.health = VenueHealthTracker.empty(deps.venueHealth);
+  }
+
+  /** The externally-visible health of every venue with recorded history. */
+  venueHealthSnapshot() {
+    return this.health.snapshot();
+  }
 
   async executeOnce(
     mandate: RuntimeMandate,
@@ -75,8 +94,20 @@ export class Executor {
     proposal: SliceProposal,
     nowMs: number,
   ): Promise<ExecOutcome> {
-    // Best execution: quote every allowlisted venue and take the best output.
-    // The chosen venue is re-validated against the allowlist by both the guardrail
+    // Route only over venues healthy enough right now: a venue quarantined by
+    // repeated quote/swap failures is held out until its cooldown elapses, so one
+    // misbehaving venue never stalls the whole mandate.
+    const routable = this.health.healthy(mandate.venueAllowlist, nowMs);
+    if (routable.length === 0) {
+      return {
+        status: "skipped",
+        code: "NoHealthyVenue",
+        message: "every allowlisted venue is quarantined (cooling); will retry after cooldown",
+      };
+    }
+
+    // Best execution: quote every routable venue and take the best output. The
+    // chosen venue is re-validated against the allowlist by both the guardrail
     // pre-check below and the vault on-chain.
     let quote: Quote;
     try {
@@ -87,16 +118,28 @@ export class Executor {
             tokenOut: this.deps.buyToken,
             amount: proposal.sellAmount,
           },
-          mandate.venueAllowlist,
+          routable,
         ),
       );
-      const best = selectBestQuote(quotes, mandate.venueAllowlist);
+      const best = selectBestQuote(quotes, routable);
       if (best === null) {
-        return { status: "skipped", code: "VenueNotAllowed", message: "no allowlisted venue produced a usable quote" };
+        // No usable quote from any routable venue: count a failure against each so
+        // a persistently empty book eventually quarantines them.
+        this.recordVenues(routable, "fail", nowMs);
+        return { status: "skipped", code: "VenueNotAllowed", message: "no routable venue produced a usable quote" };
       }
       quote = best;
     } catch (err) {
+      this.recordVenues(routable, "fail", nowMs);
       return { status: "paused", reason: `quote fetch failed: ${describe(err)}` };
+    }
+
+    // Reject a quote that has gone stale between fetch and now: committing a price
+    // the market has already left locks in slippage or guarantees an on-chain
+    // revert. Skipping (not pausing) lets the loop refetch on the next tick.
+    const freshness = checkFreshness(quote, nowMs, this.deps.freshness);
+    if (!freshness.fresh) {
+      return { status: "skipped", code: "StaleQuote", message: freshness.reason };
     }
 
     const check = validateSlice(mandate, state, proposal, quote, nowMs);
@@ -139,27 +182,32 @@ export class Executor {
       }
     }
 
-    let swap: { deployHash: string; boughtAmount: bigint };
+    // Realised output is measured as the treasury's buy-asset balance delta across
+    // the confirmed swap — `build_swap` only knows the expected amount, never the
+    // settled one. Snapshot the balance before submitting.
+    let balanceBefore: bigint;
+    try {
+      balanceBefore = await withRetry(() =>
+        this.deps.market.tokenBalance(this.deps.proceedsRecipient, this.deps.buyToken),
+      );
+    } catch (err) {
+      return { status: "paused", reason: `buy-asset balance read failed: ${describe(err)}` };
+    }
+
+    let swap: { deployHash: string };
     try {
       swap = await withRetry(() =>
-        this.deps.market.executeSwap({
+        this.deps.market.swap({
           tokenIn: this.deps.sellToken,
           tokenOut: this.deps.buyToken,
           amount: proposal.sellAmount,
-          minOut,
-          recipient: this.deps.proceedsRecipient,
-          ...(quote.routeId ? { routeId: quote.routeId } : {}),
+          slippageBps: proposal.maxSlippageBps,
         }),
       );
     } catch (err) {
+      // Swap failure is venue-attributable: count it against the chosen venue.
+      this.recordVenues([quote.venue], "fail", nowMs);
       return { status: "paused", reason: `swap submission failed: ${describe(err)}` };
-    }
-
-    if (swap.boughtAmount < minOut) {
-      return {
-        status: "paused",
-        reason: `realised output ${swap.boughtAmount} below committed min_out ${minOut}`,
-      };
     }
 
     // Gate on the swap deploy landing on-chain before recording the fill: a
@@ -168,6 +216,8 @@ export class Executor {
     {
       const settled = await this.deps.confirm.confirmDeploy(swap.deployHash);
       if (settled.status !== "success") {
+        // The venue's swap did not land: quarantine pressure on the chosen venue.
+        this.recordVenues([quote.venue], "fail", nowMs);
         return {
           status: "paused",
           reason:
@@ -178,12 +228,30 @@ export class Executor {
       }
     }
 
+    // The swap is settled: the balance delta is the realised, on-chain output.
+    let boughtAmount: bigint;
+    try {
+      const after = await withRetry(() =>
+        this.deps.market.tokenBalance(this.deps.proceedsRecipient, this.deps.buyToken),
+      );
+      boughtAmount = after - balanceBefore;
+    } catch (err) {
+      return { status: "paused", reason: `realised output read failed: ${describe(err)}` };
+    }
+    if (boughtAmount < minOut) {
+      this.recordVenues([quote.venue], "fail", nowMs);
+      return {
+        status: "paused",
+        reason: `realised output ${boughtAmount} below committed min_out ${minOut}`,
+      };
+    }
+
     let recordTxHash: string;
     try {
       recordTxHash = await withRetry(() =>
         this.deps.vault.recordFill({
           sliceId,
-          boughtAmount: swap.boughtAmount,
+          boughtAmount,
           swapDeployHash: swap.deployHash,
         }),
       );
@@ -202,6 +270,10 @@ export class Executor {
       return { status: "paused", reason: `attestation failed: ${describe(err)}` };
     }
 
+    // Full success: the chosen venue quoted and settled cleanly — clear its
+    // failure streak so a single past blip does not keep it under suspicion.
+    this.recordVenues([quote.venue], "ok", nowMs);
+
     return {
       status: "filled",
       sliceId,
@@ -209,9 +281,20 @@ export class Executor {
       swapDeployHash: swap.deployHash,
       attestTxHash,
       sellAmount: proposal.sellAmount,
-      boughtAmount: swap.boughtAmount,
+      boughtAmount,
       minOut,
     };
+  }
+
+  /**
+   * Fold a quote/swap outcome for one or more venues into the health tracker.
+   * Latency is not separately measured here (the failure/success signal is what
+   * drives quarantine), so a healthy latency of 0 is recorded for `ok`.
+   */
+  private recordVenues(venues: readonly string[], outcome: "ok" | "fail", nowMs: number): void {
+    for (const venue of venues) {
+      this.health = this.health.record(venue, outcome, 0, nowMs);
+    }
   }
 }
 

@@ -47,6 +47,10 @@ export interface Quote {
   sellAmount: bigint;
   /** Expected output for `sellAmount`, in buy-asset base units. */
   quotedOut: bigint;
+  /** Unix ms the quote was produced, stamped by the client at fetch time. The
+   * executor rejects a quote older than the freshness TTL before committing it
+   * on-chain, so a stale price is never locked into `execute_slice`. */
+  quotedAtMs: number;
   /** Optional route identifier echoed back from the venue. */
   routeId?: string;
 }

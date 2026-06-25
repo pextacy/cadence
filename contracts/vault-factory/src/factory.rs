@@ -10,8 +10,9 @@ use crate::errors::Error;
 use crate::events::{VaultDeployed, VaultIntentRecorded, WasmUpdated};
 use crate::storage::{VaultFactory, VaultIntent};
 use cadence_access_control::roles;
+use cadence_treasury_multisig::multisig::MultisigApprovalContractRef;
 use cadence_vault_registry::registry::VaultRegistrationContractRef;
-use odra::casper_types::bytesrepr::Bytes;
+use odra::casper_types::bytesrepr::{Bytes, ToBytes};
 use odra::prelude::*;
 use odra::ContractRef;
 
@@ -63,6 +64,9 @@ impl VaultFactory {
     ) -> u64 {
         self.assert_admin();
         self.validate_create(vault, treasury, agent);
+        // Optional second gate: when a multisig is wired, the M-of-N owners must
+        // have approved+executed this exact creation action before it can proceed.
+        self.assert_multisig_approved(vault, treasury, agent, mandate_hash);
 
         let wasm_ref = self
             .vault_wasm_ref
@@ -133,11 +137,40 @@ impl VaultFactory {
         });
     }
 
+    /// Wire (or rotate) an optional M-of-N approval gate over `create_vault`. Once
+    /// set, a creation only proceeds if the owners approved+executed the exact
+    /// action in `multisig`. Caller MUST hold [`roles::FACTORY_ADMIN`]. Pass the
+    /// factory's own creation-authority decision here — leaving it unset keeps the
+    /// admin-only behaviour.
+    pub fn set_multisig(&mut self, multisig: Address) {
+        self.assert_admin();
+        self.multisig.set(multisig);
+    }
+
     // ----- views -----
 
     /// The registry address vaults are registered in.
     pub fn registry(&self) -> Option<Address> {
         self.registry.get()
+    }
+
+    /// The configured multisig approval gate, if one is wired.
+    pub fn multisig(&self) -> Option<Address> {
+        self.multisig.get()
+    }
+
+    /// The canonical action hash the multisig owners must approve to authorise
+    /// creating this exact vault. Owners derive the same hash off-chain and
+    /// `propose` it; `create_vault` recomputes and verifies it. Binds all four
+    /// creation parameters, so approval of one creation can never authorise another.
+    pub fn create_action_hash(
+        &self,
+        vault: Address,
+        treasury: Address,
+        agent: Address,
+        mandate_hash: [u8; 32],
+    ) -> [u8; 32] {
+        self.compute_action_hash(vault, treasury, agent, &mandate_hash)
     }
 
     /// The configured vault package-hash (stored wasm reference), if any.
@@ -190,5 +223,50 @@ impl VaultFactory {
         if vault == treasury || vault == agent || treasury == agent {
             self.env().revert(Error::InvalidInput);
         }
+    }
+
+    /// When a multisig gate is configured, require the owners to have
+    /// approved+executed the exact creation action (by its hash) before proceeding.
+    /// A no-op when no gate is wired. Reverts [`Error::MultisigApprovalRequired`]
+    /// when the action is not approved.
+    fn assert_multisig_approved(
+        &self,
+        vault: Address,
+        treasury: Address,
+        agent: Address,
+        mandate_hash: [u8; 32],
+    ) {
+        let multisig = match self.multisig.get() {
+            Some(addr) => addr,
+            None => return,
+        };
+        let action_hash = self.compute_action_hash(vault, treasury, agent, &mandate_hash);
+        let approved =
+            MultisigApprovalContractRef::new(self.env(), multisig).is_action_approved(action_hash);
+        if !approved {
+            self.env().revert(Error::MultisigApprovalRequired);
+        }
+    }
+
+    /// Canonical creation-action hash: `blake2b(vault || treasury || agent ||
+    /// mandate_hash)`, each address in its Casper `ToBytes` encoding. Deterministic
+    /// and binds every creation parameter, so the multisig approval is specific to
+    /// this exact vault/treasury/agent/mandate tuple.
+    fn compute_action_hash(
+        &self,
+        vault: Address,
+        treasury: Address,
+        agent: Address,
+        mandate_hash: &[u8; 32],
+    ) -> [u8; 32] {
+        let mut preimage: Vec<u8> = Vec::new();
+        for part in [vault.to_bytes(), treasury.to_bytes(), agent.to_bytes()] {
+            match part {
+                Ok(bytes) => preimage.extend_from_slice(&bytes),
+                Err(_) => self.env().revert(Error::SerializationError),
+            }
+        }
+        preimage.extend_from_slice(mandate_hash);
+        self.env().hash(preimage.as_slice())
     }
 }

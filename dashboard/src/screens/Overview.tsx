@@ -2,14 +2,16 @@ import { Link } from "react-router-dom";
 import { useDesk } from "../App.js";
 import { deriveMetrics } from "../lib/events.js";
 import { formatAmount, formatDuration, formatBps, formatPrice } from "../lib/format.js";
+import { useActivity } from "../lib/useActivity.js";
 import { CadenceStave } from "../components/CadenceStave.js";
-import { NonDataState, Stat, StatusBadge } from "../components/ui.js";
+import { Stat } from "../components/ui.js";
 
 export function Overview(): JSX.Element {
   const { config, stream, nowMs } = useDesk();
   const { state, connection } = stream;
   const metrics = deriveMetrics(state, nowMs, config.naiveBaselinePrice);
   const live = connection === "open" && state.status !== "Unknown";
+  const activity = useActivity(config.vaultContractHash);
 
   return (
     <div>
@@ -54,11 +56,27 @@ export function Overview(): JSX.Element {
           ) : (
             <div className="card" style={{ marginBottom: 0 }}>
               <h2>Desk status</h2>
-              <p className="sub">Live state streams in from the vault's on-chain events.</p>
-              <NonDataState kind="empty" title="No active mandate connected">
-                Sign and fund a mandate, then configure streaming to watch the desk work in real
-                time. Until then this stays empty — never sample numbers.
-              </NonDataState>
+              <p className="sub">
+                No mandate is streaming live this moment — here is the deployed vault's real
+                on-chain activity (the live view fills in as new events arrive).
+              </p>
+              <div className="stat-grid" style={{ marginTop: 12 }}>
+                <Stat label="Network" value={config.chainName} />
+                <Stat label="Pair" value={`${config.sellAsset} → ${config.buyAsset}`} />
+                <Stat
+                  label="Slices executed"
+                  value={activity.summary ? String(activity.summary.slices) : null}
+                />
+                <Stat
+                  label="CSPR sold"
+                  value={activity.summary ? formatAmount(activity.summary.soldMotes, config.sellAsset) : null}
+                  unit={config.sellAsset}
+                />
+              </div>
+              <p className="sub" style={{ marginTop: 14 }}>
+                <Link to="/activity">See full on-chain activity →</Link> ·{" "}
+                <Link to="/deployments">Deployed contracts →</Link>
+              </p>
             </div>
           )}
         </div>

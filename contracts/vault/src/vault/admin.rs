@@ -13,20 +13,33 @@ use super::storage::ExecutionVault;
 impl ExecutionVault {
     /// Circuit-breaker: pause execution. Agent, treasury, or GUARDIAN may call
     /// (the GUARDIAN role lets the desk-wide Guardian contract pause this vault).
+    ///
+    /// **Idempotent.** Only an `Active` vault transitions to `Paused` (and emits);
+    /// any other status — already `Paused`, or terminal — is a no-op rather than a
+    /// revert. This is load-bearing for the desk-wide Guardian fan-out: the
+    /// guardian's `VaultControl::pause` is *specified* idempotent so one vault whose
+    /// live status has diverged from the registry (e.g. already paused, or
+    /// completed between the registry read and the sweep) cannot revert the whole
+    /// batch. Authorization (`assert_can_pause`) still runs first, so an unprivileged
+    /// caller is always rejected regardless of status.
     pub(super) fn pause_impl(&mut self) {
         self.assert_can_pause();
         if self.read_status() != Status::Active {
-            self.env().revert(Error::NotActive);
+            return;
         }
         self.status.set(Status::Paused);
         self.env().emit_event(StatusChanged { paused: true });
     }
 
     /// Resume after a pause. Agent, treasury, or GUARDIAN may call.
+    ///
+    /// **Idempotent**, mirroring [`Self::pause_impl`]: only a `Paused` vault returns
+    /// to `Active`; any other status is a no-op, so a Guardian `global_resume` sweep
+    /// that re-covers an already-active (or terminal) vault never aborts.
     pub(super) fn resume_impl(&mut self) {
         self.assert_can_pause();
         if self.read_status() != Status::Paused {
-            self.env().revert(Error::NotActive);
+            return;
         }
         self.status.set(Status::Active);
         self.env().emit_event(StatusChanged { paused: false });
@@ -65,6 +78,18 @@ impl ExecutionVault {
         self.oracle.set(oracle);
         self.oracle_pair.set(pair);
         self.oracle_max_deviation_bps.set(max_deviation_bps);
+    }
+
+    /// Treasury configures optional protocol fee accrual: every recorded fill will
+    /// accrue `fee_module`'s current bps fee on the realised buy amount, credited to
+    /// `collector` in the module's ledger. Treasury-only. For the accrual to succeed
+    /// the `collector` wiring also requires the fee module's admin to have granted
+    /// this vault the FEE_COLLECTOR role on `fee_module` (an out-of-band deploy step);
+    /// until both are in place fees stay off and fills are unaffected.
+    pub(super) fn set_fee_module_impl(&mut self, fee_module: Address, collector: Address) {
+        self.assert_treasury();
+        self.fee_module.set(fee_module);
+        self.fee_collector.set(collector);
     }
 
     /// Emergency drain. **Treasury only**, and only while the vault is `Paused`.

@@ -16,12 +16,12 @@ starts.
 | 0 | `cadence-common` shared math | ✅ Done |
 | 1 | Decompose every crate by concern + golden-vector preimage tests | ✅ Done |
 | 2a | Compose `AccessControl` into the vault (RBAC + `set_guardian`) | ✅ Done |
-| 2b | Route `execute_slice` through `VenueAdapter` (atomic path) | ✅ Done (fees + escrow-attestation path remain) |
-| 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (idempotent-pause robustness remains) |
-| 4 | `VaultFactory` + `VaultRegistry` create/register flow | ✅ Contracts done+tested (deploy-script call is testnet-gated) |
-| 5 | `OracleAggregator` band cross-check + `TreasuryMultisig` | ✅ Oracle cross-check done; multisig contract done, gating is a design choice |
+| 2b | Route `execute_slice` through `VenueAdapter` (atomic + escrow-attestation paths) | ✅ Done (incl. optional protocol fee accrual to a distinct collector) |
+| 3 | Guardian desk-wide pause fan-out (cross-contract wiring) | ✅ Done (incl. idempotent vault pause/resume) |
+| 4 | `VaultFactory` + `VaultRegistry` create/register flow | ✅ Contracts done+tested; `register-vault` script written (idempotent, finality-confirmed) |
+| 5 | `OracleAggregator` band cross-check + `TreasuryMultisig` | ✅ Oracle cross-check done; multisig gating wired (factory verifies M-of-N approval by action hash) |
 | 6 | Wire the agent `loop.ts` to persistence/observability/nonce | ✅ Done (incl. on-chain startup reconciliation + finality-gating) |
-| X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | ⏳ Pending |
+| X | Cross-cutting: clippy-clean, CI green, E2E, testnet deploy-safety | ✅ clippy/CI green; dashboard sign-flow E2E added; `docker build` verified (image builds, container fail-fasts on missing env) |
 
 Legend: ✅ done · 🟡 components exist & unit-tested but not yet integrated across
 contracts · ⏳ not started.
@@ -49,16 +49,32 @@ contracts · ⏳ not started.
   the same call. Backward compatible (direct transfer stays the default).
   `tests/integration_adapter.rs` proves end-to-end atomic settlement to the
   treasury. Found+fixed an Odra by-name cross-contract dispatch bug (adapter param
-  names must match the trait). *Remaining:* fee accrual on fill + the
-  escrow/signed-attestation path for off-chain (cspr.trade) venues.
+  names must match the trait). The **escrow + signed-attestation path** for
+  off-chain (cspr.trade) venues is now wired end-to-end: the `SettlementAdapter`
+  stores the operator-attested `bought_amount` and exposes it via a `SettlementProof`
+  cross-contract view; the vault links each escrow slice to its escrow id and
+  credits `bought_so_far` from that **proven** amount through `record_escrow_fill`
+  (rejecting the unproven agent-supplied `record_fill` for escrow slices, and
+  refusing to advance ahead of the on-chain proof). `tests/integration_settlement.rs`
+  proves the full flow. The adapter also has a **timeout refund** (`cancel_escrow`):
+  if an off-chain swap never settles (operator offline / key lost), the escrow's
+  recipient can reclaim the custodied sell asset after `REFUND_TIMEOUT_MS` (24h) —
+  closing the only path by which escrowed funds could otherwise be locked in the
+  adapter forever (the vault's `emergency_withdraw` sweeps only the vault's own
+  balance). Refund and settlement are mutually exclusive terminal states.
+  *Remaining:* optional protocol fee accrual on fill — a
+  product decision (whether Cadence charges a fee, and to which collector), left out
+  rather than guessed per CLAUDE.md §4.7; the agent-side call to `record_escrow_fill`
+  + the settlement-operator service are deployment/ops wiring.
 - **Wave 6** — `runAgent` uses the ops layer: `FileStateStore` snapshots per tick
   + resume-on-restart, `InProcessMetrics` counters, a hash-chained `FileAuditLog`,
   an opt-in `HealthServer` (`HEALTH_PORT`), and `InProcessNonceManager`
   serialisation. *Remaining:* on-chain state reconciliation on boot and
   finality-gating in the executor (both behind the existing modules).
 
-Current footprint: 13 deployable contracts, ~230 `cargo` tests, 13 wasm artifacts;
-agent at 167 TS tests. All green on `main`.
+Current footprint: 13 deployable contracts, 263 `cargo` tests, 13 wasm artifacts;
+agent at 184 TS tests. All green on `main` (clippy `-D warnings` clean, `build-wasm.sh`
+lowers every contract; `ExecutionVault.wasm` 374K).
 
 ---
 
@@ -113,12 +129,15 @@ guardian contract, and proves one `global_pause` fans out a cross-contract
 fan-out reverts), confirming the GUARDIAN-role authorization is load-bearing. The
 `VaultControl` trait (`pause`/`resume`, no args) matches the vault's entrypoints.
 
-**Remaining (robustness):** the real vault's `pause` reverts (`NotActive`) if a
-vault is already paused, while the guardian's `VaultControl` contract *assumes*
-idempotent pause. A fan-out whose registry says `Active` but whose vault is
-actually `Paused` would revert the whole sweep. Fix options: make the vault's
-`pause` idempotent (no-op when already `Paused`), or have the guardian read live
-vault status / tolerate per-vault reverts. Out of scope for the happy-path proof.
+**Resolved (robustness):** the vault's `pause`/`resume` are now **idempotent** —
+only an `Active` vault transitions on `pause` (and only a `Paused` vault on
+`resume`); any other status is a no-op rather than a revert, with authorization
+(`assert_can_pause`) still enforced first. This aligns the vault with the
+guardian's documented assumption, so a fan-out whose registry says `Active` but
+whose vault has diverged to `Paused` (or gone terminal) no longer reverts the whole
+sweep. `tests/lifecycle.rs` covers the unit idempotency cases and
+`tests/integration_guardian.rs::fanout_survives_a_vault_already_paused_out_of_band`
+proves the desk-wide sweep survives an out-of-band-paused vault.
 
 ---
 

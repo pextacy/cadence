@@ -74,9 +74,19 @@ impl ExecutionVault {
         self.execute_slice_impl(sell_amount, quoted_out, min_out, venue)
     }
 
-    /// Record realised swap proceeds for a slice (agent-only).
+    /// Record realised swap proceeds for a slice (agent-only). For direct-transfer
+    /// venues only; an escrow (off-chain adapter) slice is rejected and must use
+    /// [`Self::record_escrow_fill`].
     pub fn record_fill(&mut self, slice_id: u32, bought_amount: U512, swap_deploy_hash: String) {
         self.record_fill_impl(slice_id, bought_amount, swap_deploy_hash)
+    }
+
+    /// Credit an off-chain (escrow) slice's fill from the adapter's
+    /// operator-attested settlement (agent-only). Reverts until the
+    /// `SettlementAdapter` has recorded a verified operator signature for the
+    /// slice's escrow — the vault credits the proven amount, not an agent claim.
+    pub fn record_escrow_fill(&mut self, slice_id: u32) {
+        self.record_escrow_fill_impl(slice_id)
     }
 
     /// Record the agent's decision reasoning for a slice (audit trail).
@@ -124,6 +134,22 @@ impl ExecutionVault {
     /// Treasury configures the optional oracle price-deviation cross-check.
     pub fn set_oracle(&mut self, oracle: Address, pair: String, max_deviation_bps: u32) {
         self.set_oracle_impl(oracle, pair, max_deviation_bps)
+    }
+
+    /// Treasury configures optional protocol fee accrual: every recorded fill accrues
+    /// `fee_module`'s bps fee on the realised buy amount, credited to `collector`.
+    pub fn set_fee_module(&mut self, fee_module: Address, collector: Address) {
+        self.set_fee_module_impl(fee_module, collector)
+    }
+
+    /// The configured fee module address, if fees are enabled.
+    pub fn get_fee_module(&self) -> Option<Address> {
+        self.fee_module.get()
+    }
+
+    /// The configured protocol fee collector, if fees are enabled.
+    pub fn get_fee_collector(&self) -> Option<Address> {
+        self.fee_collector.get()
     }
 
     pub fn get_status(&self) -> Status {

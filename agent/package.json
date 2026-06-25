@@ -22,7 +22,6 @@
   },
   "dependencies": {
     "@cadence/mandate": "0.1.0",
-    "@anthropic-ai/sdk": "0.104.2",
     "@casper-ecosystem/casper-eip-712": "1.2.1",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@noble/curves": "1.8.1",

@@ -23,7 +23,7 @@ Treasurer ───────────────────────�
    ▼                                                       │ digest + sig
 ┌─────────────────────────┐   execute_slice() within   ┌───┴────────────────┐
 │  Execution Vault (Odra)  │◄───────────────────────────│   Cadence Agent     │
-│  - custody (sell asset)  │   accept / REVERT          │  - Planner (Claude) │
+│  - custody (sell asset)  │   accept / REVERT          │  - Planner (Gemini) │
 │  - mandate + limits      │───────────────────────────►│  - Executor (det.)  │
 │  - fills + attestations  │        emits events        └───────┬────────────┘
 └────────────┬─────────────┘                                    │ quotes / swaps
@@ -40,7 +40,7 @@ Treasurer ───────────────────────�
   [`contracts/README.md`](contracts/README.md).
 - **`/mandate`** — shared TypeScript package: mandate schema, EIP-712 typed-data
   hashing, signing and verification (`@casper-ecosystem/casper-eip-712`).
-- **`/agent`** — the agent service: an LLM **planner** (Claude) that proposes the
+- **`/agent`** — the agent service: an LLM **planner** (Google Gemini) that proposes the
   next slice, and a **deterministic executor** that validates every proposal
   against the mandate, submits `execute_slice`, performs the swap, records the
   fill and writes the attestation. Plus real client adapters for CSPR.trade MCP,
@@ -89,30 +89,50 @@ npm run build
 npm test
 ```
 
-## Running the demo
+## Running the demo (testnet)
+
+The testnet venue is the self-contained on-chain `Cep18SwapAdapter` — an atomic
+fixed-price pool we deploy ourselves, so the full vault → swap → settlement path
+runs end to end with no external DEX. (The CSPR.trade MCP route the agent loop uses
+for live quotes is mainnet-only; see [Mainnet route](#mainnet-route-csprtrade-live-quotes).)
 
 ```bash
 # 1. Sign a mandate (gasless, offline). Writes mandate.signed.json.
-npm run sign-mandate -w @cadence/scripts
+npm run sign-mandate:testnet -w @cadence/scripts
 
 # 2. Deploy the Execution Vault with the mandate's limits as constructor args.
-#    Reads the agent identity from AGENT_ACCOUNT_HASH; prints the deploy hash.
+#    Read the installed contract/package hash from the deploy and set
+#    VAULT_CONTRACT_HASH / VAULT_PACKAGE_HASH in .env. (The mandate is signed
+#    offline first and does not need the vault to exist — its EIP-712 domain is
+#    chain-scoped, not bound to the package hash.)
 npm run deploy:testnet -w @cadence/scripts
-#    Read the installed contract hash from the deploy and set VAULT_CONTRACT_HASH
-#    in .env. (The mandate is signed offline first and does not need the vault to
-#    exist — its EIP-712 domain is chain-scoped, not bound to the package hash.)
 
-# 3. Fund the vault and run the agent end to end on the configured pair.
-npm run demo -w @cadence/scripts
+# 3. Deploy the on-chain swap adapter (the venue). Read its contract hash from the
+#    deploy's named keys and set VENUE_ADDRESSES in .env.
+npm run deploy-adapter:testnet -w @cadence/scripts
 
-# 4. Watch it live.
+# 4. Fund the vault, point it at the adapter, set the pool price + reserve, then
+#    have the agent release a real atomic slice: vault → adapter swap → treasury
+#    paid, every step finalised on testnet with an explorer link.
+npm run fund:testnet -w @cadence/scripts
+npm run enable-and-slice:testnet -w @cadence/scripts
+
+# 5. Watch it live.
 npm run dev -w @cadence/dashboard
 ```
 
-What the demo shows: the agent fills the order over time, every swap links to the
-testnet explorer, an x402 payment proof is logged, the dashboard shows slippage
-saved versus a naive single sell, and an attempted out-of-bounds trade is visibly
-**blocked by the contract**.
+What the demo shows: the vault releases a slice, the adapter atomically swaps it and
+pays the treasury, every transaction links to the testnet explorer, the fill is
+recorded on-chain, the dashboard shows slippage saved versus a naive single sell,
+and an attempted out-of-bounds trade is visibly **blocked by the contract**.
+
+### Mainnet route (CSPR.trade live quotes)
+
+On mainnet the agent loop (`npm run demo:mainnet`) routes each slice through the
+CSPR.trade MCP instead of the local adapter: it fetches a fresh quote per
+allowlisted venue, picks best execution, signs the returned swap locally
+(non-custodial) and submits it. The public CSPR.trade MCP is mainnet-only, so this
+route is exercised on mainnet rather than testnet.
 
 ## What is verified locally vs. on testnet
 
@@ -121,14 +141,19 @@ saved versus a naive single sell, and an attempted out-of-bounds trade is visibl
   the happy path executes/records/settles, settlement returns remaining funds, and
   `init` is one-shot; the CEP-18 token: mint/transfer/approve/transfer_from; the
   x402 token: a relayer-submitted signed authorization settles while tampered,
-  replayed, expired and wrong-signer authorizations revert. (21 tests.)
+  replayed, expired and wrong-signer authorizations revert; plus the swap adapter,
+  vault-factory, vault-registry, treasury-multisig, guardian, price-oracle,
+  fee-module and access-control crates. (269 tests.)
 - **Verified by `npm test`** — EIP-712 sign/verify and tamper-rejection (mandate),
   guardrail parity with the contract, slippage/price/min-out math, the planner
   output schema, the x402 payment-payload construction + signature round-trip, and
-  the dashboard event reducer + metrics. (46 tests across packages.)
-- **Requires a configured testnet + keys** — deploying the vault, funding it, live
-  swaps via CSPR.trade, x402 premium-data calls, and CSPR.cloud streaming. These
-  run against the real endpoints; the only blanks are the `.env` values.
+  the dashboard event reducer + metrics. (201 tests across packages.)
+- **Requires a configured testnet + keys** — deploying the vault and the on-chain
+  swap adapter, funding the vault, and the agent releasing a real atomic slice
+  through the adapter (vault → swap → settlement), plus CSPR.cloud streaming for the
+  dashboard. These run against the real endpoints; the only blanks are the `.env`
+  values. Live quotes/swaps via the CSPR.trade MCP and x402 premium-data calls run
+  on **mainnet** (the public CSPR.trade MCP is mainnet-only).
 
 ## Design notes & trust boundary
 

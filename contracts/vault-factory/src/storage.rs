@@ -49,4 +49,9 @@ pub struct VaultFactory {
     pub(crate) count: Var<u64>,
     /// Primary index: intent id -> record.
     pub(crate) intents: Mapping<u64, VaultIntent>,
+    /// Optional M-of-N approval gate. When set, `create_vault` requires the owners
+    /// to have approved+executed the exact creation action (by its hash) in this
+    /// multisig before it records the intent. Unset (the default) keeps the
+    /// FACTORY_ADMIN-only behaviour.
+    pub(crate) multisig: Var<Address>,
 }

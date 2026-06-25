@@ -69,6 +69,23 @@ export function reduceEvent(state: DashboardState, ev: VaultEvent): DashboardSta
       return { ...state, slices: upsertSlice(state.slices, ev.sliceId, { reason: ev.reason }) };
     case "StatusChanged":
       return { ...state, status: (ev.paused ? "Paused" : "Active") as VaultStatus };
+    case "MandateVerified":
+      // The signature was verified on-chain; mandate fields already came from
+      // MandateInitialised, so this only confirms authenticity — no state change.
+      return state;
+    case "EmergencyWithdrawn":
+      // Treasury kill-switch: funds were drained back to the treasury and the vault
+      // is terminally halted. Reflect it so the UI never shows a stale "Active".
+      return {
+        ...state,
+        status: "Halted",
+        soldSoFar: BigInt(ev.soldSoFar),
+        settled: {
+          completed: false,
+          sliceCount: state.slices.length,
+          returnedToTreasury: BigInt(ev.returnedToTreasury),
+        },
+      };
     case "Settled":
       return {
         ...state,

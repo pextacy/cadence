@@ -50,6 +50,13 @@ pub trait FeeCollector {
     /// Charge the current protocol fee on `amount` of `asset` and credit it to
     /// the caller's accrued balance. Returns the fee charged.
     fn accrue_fee(&mut self, asset: String, amount: U512) -> U512;
+
+    /// Charge the current protocol fee on `amount` of `asset` and credit it to
+    /// `collector`'s accrued balance (rather than the caller's). The caller must
+    /// still hold the collector role — this is for an authorised accruer (e.g. a
+    /// vault) that books the fee for a distinct protocol collector account.
+    /// Returns the fee charged.
+    fn accrue_fee_for(&mut self, collector: Address, asset: String, amount: U512) -> U512;
 }
 
 #[odra::module]
@@ -96,6 +103,24 @@ impl FeeModule {
     pub fn accrue_fee(&mut self, asset: String, amount: U512) -> U512 {
         let caller = self.env().caller();
         self.assert_collector(caller);
+        self.accrue_to(caller, asset, amount)
+    }
+
+    /// Charge the current fee on `amount` of `asset` and credit it to `collector`
+    /// (not the caller). The caller MUST hold [`roles::FEE_COLLECTOR`] — this is the
+    /// entrypoint an authorised accruer (e.g. an Execution Vault) calls to book the
+    /// protocol fee for a distinct collector account on each settled fill.
+    ///
+    /// Reverts as [`Self::accrue_fee`]. Returns the fee charged.
+    pub fn accrue_fee_for(&mut self, collector: Address, asset: String, amount: U512) -> U512 {
+        let caller = self.env().caller();
+        self.assert_collector(caller);
+        self.accrue_to(collector, asset, amount)
+    }
+
+    /// Shared accrual: charge the current fee on `amount` and credit it to
+    /// `collector`'s ledger entry. Authorisation is the caller's responsibility.
+    fn accrue_to(&mut self, collector: Address, asset: String, amount: U512) -> U512 {
         if amount.is_zero() {
             self.env().revert(Error::ZeroAmount);
         }
@@ -106,19 +131,19 @@ impl FeeModule {
             Err(e) => self.env().revert(map_math(e)),
         };
 
-        let current = self.accrued.get_or_default(&caller);
+        let current = self.accrued.get_or_default(&collector);
         let updated = match current.checked_add(fee) {
             Some(v) => v,
             None => self.env().revert(Error::Overflow),
         };
-        self.accrued.set(&caller, updated);
+        self.accrued.set(&collector, updated);
 
         self.env().emit_event(FeeAccrued {
             asset,
             amount,
             fee,
             fee_bps,
-            collector: caller,
+            collector,
         });
         fee
     }

@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { MarketSnapshot, RuntimeMandate, SliceProposal, VaultState } from "../types.js";
 import { parseProposal } from "./schema.js";
 import { evenSplit } from "./strategies/twap.js";
@@ -45,16 +44,16 @@ Constraints you must respect:
 - Keep maxSlippageBps at or below suggestedSlippageBps.
 - If volatility is elevated, propose a smaller slice and tighten maxSlippageBps further.`;
 
-/** LLM planner. Produces an untrusted proposal; the executor validates it. */
-export class Planner {
-  private readonly client: Anthropic;
+/** Google Gemini base endpoint for the Generative Language API. */
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
+/** LLM planner (Google Gemini). Produces an untrusted proposal; the executor
+ * validates it and the contract enforces every limit on-chain. */
+export class Planner {
   constructor(
-    apiKey: string,
+    private readonly apiKey: string,
     private readonly model: string,
-  ) {
-    this.client = new Anthropic({ apiKey });
-  }
+  ) {}
 
   async propose(input: PlannerInput): Promise<SliceProposal> {
     const remaining = input.mandate.totalSell - input.state.soldSoFar;
@@ -92,20 +91,57 @@ export class Planner {
       slicesRemaining,
     });
 
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 512,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userMessage }],
+    // The deterministic strategy proposal — a real TWAP/VWAP-sized slice, used as
+    // the executor-validated fallback whenever the LLM is unavailable. It is what
+    // keeps a single failed request from ever crashing or being retried.
+    const fallback = (why: string): SliceProposal => ({
+      sellAmount: reference,
+      notBeforeMs: input.nowMs,
+      maxSlippageBps: suggestedSlippageBps,
+      reason: `deterministic ${input.mandate.strategy} slice (${why})`,
     });
 
-    const text = res.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("")
-      .trim();
-
-    return parseProposal(extractJson(text));
+    // Exactly ONE Gemini request per slice — no retry. On any failure (especially a
+    // 429 rate-limit) we degrade to the deterministic proposal instead of re-hitting
+    // the endpoint, so the agent never produces a "too many requests" storm.
+    try {
+      const res = await fetch(
+        `${GEMINI_BASE}/${this.model}:generateContent?key=${encodeURIComponent(this.apiKey)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            contents: [{ role: "user", parts: [{ text: userMessage }] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              maxOutputTokens: 1024,
+              temperature: 0,
+              // Gemini 2.5 "thinking" models otherwise spend the output budget on
+              // reasoning tokens and truncate the JSON answer — disable it for this
+              // small structured-output task.
+              thinkingConfig: { thinkingBudget: 0 },
+            },
+          }),
+        },
+      );
+      if (!res.ok) {
+        return fallback(res.status === 429 ? "Gemini rate-limited (429)" : `Gemini HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      };
+      const text = (data.candidates?.[0]?.content?.parts ?? [])
+        .map((p) => p.text ?? "")
+        .join("")
+        .trim();
+      if (!text) {
+        return fallback("Gemini empty response");
+      }
+      return parseProposal(extractJson(text));
+    } catch (err) {
+      return fallback(`LLM unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 

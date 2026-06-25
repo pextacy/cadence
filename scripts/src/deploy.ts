@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import casper from "casper-js-sdk";
 import type { SignedMandateFile } from "@cadence/agent";
 
-const { Args, CLValue, Key, SessionBuilder } = casper;
+const { CLValue, Key, SessionBuilder } = casper;
 import {
   clBytesList,
   clKeyList,
@@ -11,9 +11,11 @@ import {
   hexToBytes,
   loadSecp256k1,
   log,
+  logNetworkBanner,
   makeRpc,
   networkChainName,
   networkNodeRpc,
+  odraInstallArgs,
   requireEnv,
 } from "./lib/casper.js";
 import { confirmTransaction } from "./lib/confirm.js";
@@ -48,16 +50,53 @@ export interface DeployResult {
  *    `confirmed` / `failed`. Throws on on-chain revert or timeout.
  */
 export async function deployVault(): Promise<DeployResult> {
+  logNetworkBanner("deploy-vault");
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
   const wasmPath = process.env.VAULT_WASM_PATH ?? "../contracts/vault/wasm/ExecutionVault.wasm";
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
-  const agentAccountHash = requireEnv("AGENT_ACCOUNT_HASH"); // "account-hash-…"
   const treasuryKey = loadSecp256k1(requireEnv("TREASURY_PRIVATE_KEY"));
 
   const signed = JSON.parse(await readFile(signedPath, "utf8")) as SignedMandateFile;
   const m = signed.mandate;
   const mandateDigest = signed.digest;
+
+  // The `agent` init arg MUST equal the agent bound into the signed preimage, or the
+  // on-chain signature check fails. Prefer the value recorded at signing time; only
+  // fall back to the env var for older signed files.
+  const agentAccountHash = signed.agentAccountHash ?? requireEnv("AGENT_ACCOUNT_HASH"); // "account-hash-…"
+  if (
+    signed.agentAccountHash &&
+    process.env.AGENT_ACCOUNT_HASH &&
+    process.env.AGENT_ACCOUNT_HASH !== signed.agentAccountHash
+  ) {
+    throw new Error(
+      `AGENT_ACCOUNT_HASH (${process.env.AGENT_ACCOUNT_HASH}) differs from the agent ` +
+        `bound into the signed mandate (${signed.agentAccountHash}); init's signature ` +
+        "check would revert. Re-sign or fix the env var.",
+    );
+  }
+
+  // The vault's `init` authorizes the limits with a Casper-native signature, not the
+  // EIP-712 digest (Odra cannot recompute keccak). Without it, init reverts. It is
+  // produced by `sign-mandate`; fail fast with a clear message if it's absent.
+  if (!signed.casperSignature) {
+    throw new Error(
+      "signed mandate is missing casperSignature — re-run `npm run sign-mandate` " +
+        "(with AGENT_ACCOUNT_HASH set) to regenerate it before deploying.",
+    );
+  }
+  // The install sender's key MUST be the treasury whose public key was signed into
+  // the preimage, since `init` checks `treasury_public_key` hashes to its caller.
+  if (
+    signed.treasuryPublicKey &&
+    signed.treasuryPublicKey.toLowerCase() !== treasuryKey.publicKey.toHex().toLowerCase()
+  ) {
+    throw new Error(
+      "TREASURY_PRIVATE_KEY does not match the key that signed the mandate " +
+        `(${signed.treasuryPublicKey}); init's treasury check would revert.`,
+    );
+  }
 
   // Idempotency: reuse a prior confirmed install for the same chain + mandate.
   const manifest = await loadManifest(MANIFEST_PATH);
@@ -88,10 +127,14 @@ export async function deployVault(): Promise<DeployResult> {
 
   const wasm = new Uint8Array(await readFile(wasmPath));
 
-  const args = Args.fromMap({
+  const args = odraInstallArgs("cadence_vault_package_hash", {
     agent: CLValue.newCLKey(Key.newKey(agentAccountHash)),
     mandate_digest: clBytesList(hexToBytes(signed.digest)),
     signature: clBytesList(hexToBytes(signed.signature)),
+    // Casper-native authorization verified on-chain at init.
+    treasury_public_key: CLValue.newCLPublicKey(treasuryKey.publicKey),
+    casper_signature: clBytesList(hexToBytes(signed.casperSignature)),
+    mandate_nonce: clBytesList(hexToBytes(m.nonce)),
     sell_asset: CLValue.newCLString(m.sellAsset),
     buy_asset: CLValue.newCLString(m.buyAsset),
     total_sell: CLValue.newCLUInt512(m.totalSellAmount),

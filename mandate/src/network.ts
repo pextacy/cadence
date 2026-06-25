@@ -24,14 +24,20 @@ export interface NetworkPreset {
 export const NETWORK_PRESETS: Record<CasperNetwork, NetworkPreset> = {
   mainnet: {
     chainName: "casper",
-    nodeRpcUrl: "https://node.mainnet.cspr.cloud/rpc",
+    // Free public Casper node — JSON-RPC over POST, no API key. The cspr.cloud node
+    // (node.mainnet.cspr.cloud/rpc) is auth-gated and 401s without an access token;
+    // override via CASPER_NODE_RPC if you have a cspr.cloud key and want it.
+    nodeRpcUrl: "https://node.mainnet.casper.network/rpc",
     csprCloudRestUrl: "https://api.cspr.cloud",
     csprCloudStreamingUrl: "wss://streaming.cspr.cloud",
     explorerTxBase: "https://cspr.live/deploy/",
   },
   testnet: {
     chainName: "casper-test",
-    nodeRpcUrl: "https://node.testnet.cspr.cloud/rpc",
+    // Free public Casper testnet node — JSON-RPC over POST, no API key. The cspr.cloud
+    // node (node.testnet.cspr.cloud/rpc) is auth-gated and 401s without an access token;
+    // override via CASPER_NODE_RPC if you have a cspr.cloud key and want it.
+    nodeRpcUrl: "https://node.testnet.casper.network/rpc",
     csprCloudRestUrl: "https://api.testnet.cspr.cloud",
     csprCloudStreamingUrl: "wss://streaming.testnet.cspr.cloud",
     explorerTxBase: "https://testnet.cspr.live/deploy/",

@@ -1,5 +1,5 @@
 import type { Quote, RuntimeMandate, SliceProposal, VaultState } from "../types.js";
-import { impliedSlippageBps, priceFixed, withinBand } from "../units.js";
+import { BPS_DENOMINATOR, computeMinOut, priceFixed, withinBand, withinSlippage } from "../units.js";
 
 /**
  * Guardrail rejection codes, named to mirror the on-chain `Error` variants. The
@@ -51,8 +51,12 @@ export function validateSlice(
 
   // The per-slice cap is the tighter of the mandate cap and the planner's request.
   const effectiveSlippageBps = Math.min(proposal.maxSlippageBps, mandate.maxSlippageBps);
-  const minOut =
-    (quote.quotedOut * BigInt(10_000 - effectiveSlippageBps)) / 10_000n;
+  if (effectiveSlippageBps < 0 || effectiveSlippageBps > BPS_DENOMINATOR) {
+    return { ok: false, code: "SlippageTooHigh", message: "slippage cap out of range (0..=100%)" };
+  }
+  // Round min_out UP so it satisfies the vault's cross-multiply predicate exactly
+  // (a floored min_out can be rejected on-chain — see computeMinOut/withinSlippage).
+  const minOut = computeMinOut(quote.quotedOut, effectiveSlippageBps);
 
   if (minOut > quote.quotedOut) {
     return { ok: false, code: "MinOutAboveQuote", message: "min_out exceeds quote" };
@@ -60,7 +64,9 @@ export function validateSlice(
   if (state.soldSoFar + proposal.sellAmount > mandate.totalSell) {
     return { ok: false, code: "SpendCapExceeded", message: "slice would exceed the spend cap" };
   }
-  if (impliedSlippageBps(quote.quotedOut, minOut) > mandate.maxSlippageBps) {
+  // Validate with the contract's exact predicate against the mandate's stored cap,
+  // so the agent and `execute_slice` never disagree at a rounding boundary.
+  if (!withinSlippage(quote.quotedOut, minOut, mandate.maxSlippageBps)) {
     return { ok: false, code: "SlippageTooHigh", message: "implied slippage exceeds the cap" };
   }
   const price = priceFixed(quote.quotedOut, proposal.sellAmount);

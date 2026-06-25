@@ -96,6 +96,11 @@ impl Cep18SwapAdapter {
     /// [`PRICE_SCALE`](super::PRICE_SCALE)). Owner only.
     pub fn set_price(&mut self, price: U512) {
         self.assert_owner();
+        // Reject zero: a zero price reads as "unset" and would brick every swap
+        // (Error::PriceNotSet) until re-set — a silent owner foot-gun / DoS.
+        if price.is_zero() {
+            self.env().revert(Error::PriceNotSet);
+        }
         self.price.set(price);
     }
 

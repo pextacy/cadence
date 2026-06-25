@@ -24,4 +24,10 @@ pub enum Error {
     SerializationError = 9,
     /// Caller is not the configured operator (administrative entrypoints).
     NotOperator = 10,
+    /// `cancel_escrow` was called by an account other than the escrow's recipient.
+    NotRefundRecipient = 11,
+    /// `cancel_escrow` was called before the refund timeout elapsed.
+    RefundTimeoutNotReached = 12,
+    /// The escrow has already been refunded — one terminal outcome per escrow.
+    EscrowAlreadyRefunded = 13,
 }

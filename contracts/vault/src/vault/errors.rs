@@ -53,4 +53,17 @@ pub enum Error {
     /// more than the allowed band (an extra, dynamic check beyond the static
     /// mandate band; only enforced when an oracle is configured).
     OraclePriceDeviation = 24,
+    /// `record_escrow_fill` was called for a slice that did not route through an
+    /// escrow (off-chain adapter) venue.
+    NotEscrowSlice = 25,
+    /// The escrow adapter has no operator-attested settlement for this slice yet,
+    /// so the realised fill cannot be credited.
+    EscrowNotSettled = 26,
+    /// An escrow (off-chain adapter) slice must be credited via
+    /// `record_escrow_fill` from the operator-attested settlement, never via the
+    /// agent-supplied `record_fill`.
+    UseEscrowFill = 27,
+    /// An escrow adapter returned a settlement reference that is not a valid
+    /// 8-byte escrow id.
+    BadSettlementRef = 28,
 }

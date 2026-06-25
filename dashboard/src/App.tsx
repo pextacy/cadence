@@ -8,6 +8,9 @@ import { Portfolio } from "./screens/Portfolio.js";
 import { CreateMandate } from "./screens/CreateMandate.js";
 import { LiveExecution } from "./screens/LiveExecution.js";
 import { FinalReport } from "./screens/FinalReport.js";
+import { AIPlanner } from "./screens/AIPlanner.js";
+import { Deployments } from "./screens/Deployments.js";
+import { Activity } from "./screens/Activity.js";
 
 export interface DeskContext {
   config: DashboardConfig;
@@ -49,6 +52,9 @@ export function App(): JSX.Element {
           <Route path="mandate" element={<CreateMandate config={config} />} />
           <Route path="execution" element={<LiveExecution />} />
           <Route path="report" element={<FinalReport />} />
+          <Route path="planner" element={<AIPlanner />} />
+          <Route path="activity" element={<Activity />} />
+          <Route path="deployments" element={<Deployments />} />
         </Route>
       </Routes>
     </HashRouter>

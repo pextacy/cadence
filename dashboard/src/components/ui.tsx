@@ -7,6 +7,7 @@ const STATUS_CLASS: Record<VaultStatus | "Unknown", string> = {
   Paused: "hold",
   Completed: "ok",
   Expired: "stop",
+  Halted: "stop",
   Unknown: "wait",
 };
 

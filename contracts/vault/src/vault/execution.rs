@@ -10,6 +10,8 @@ use cadence_common::checked::checked_mul;
 use cadence_common::price::implied_price;
 use cadence_common::scale::BPS_DENOMINATOR;
 use cadence_dex_adapter::adapter::VenueAdapterContractRef;
+use cadence_dex_adapter::settlement::SettlementProofContractRef;
+use cadence_fee_module::fees::FeeCollectorContractRef;
 use cadence_price_oracle::types::OracleAdapterContractRef;
 
 use super::errors::Error;
@@ -129,6 +131,18 @@ impl ExecutionVault {
                 );
             if receipt.atomic {
                 self.record_atomic_fill(slice_id, receipt.bought_amount, receipt.settlement_ref);
+            } else {
+                // Two-phase escrow venue (e.g. cspr.trade): the realised buy amount
+                // is not known on-chain yet. Link this slice to the adapter's escrow
+                // so the fill is later credited from the operator-attested settlement
+                // via `record_escrow_fill` — never from an agent-supplied amount.
+                let escrow_id = match decode_escrow_id(&receipt.settlement_ref) {
+                    Some(id) => id,
+                    None => self.env().revert(Error::BadSettlementRef),
+                };
+                self.slice_is_escrow.set(&slice_id, true);
+                self.slice_escrow_adapter.set(&slice_id, venue_address);
+                self.slice_escrow_id.set(&slice_id, escrow_id);
             }
         } else {
             // Legacy / off-chain path: release the sell asset to the mandate-bound
@@ -161,6 +175,7 @@ impl ExecutionVault {
             swap_deploy_hash: String::from_utf8(settlement_ref.to_vec()).unwrap_or_default(),
             bought_so_far: bought,
         });
+        self.accrue_fee_if_configured(bought_amount);
     }
 
     /// Record realised swap proceeds for a slice and link the on-chain swap deploy
@@ -175,6 +190,12 @@ impl ExecutionVault {
         self.assert_agent();
         if slice_id >= self.slice_count.get_or_default() {
             self.env().revert(Error::UnknownSlice);
+        }
+        // Off-chain (escrow) slices are credited only from the operator-attested
+        // settlement via `record_escrow_fill`; an agent-supplied amount here would
+        // bypass the on-chain proof, so it is rejected.
+        if self.slice_is_escrow.get_or_default(&slice_id) {
+            self.env().revert(Error::UseEscrowFill);
         }
         // One fill per slice: a second call would double-count `bought_so_far`.
         if self.slice_filled.get_or_default(&slice_id) {
@@ -197,6 +218,7 @@ impl ExecutionVault {
             swap_deploy_hash,
             bought_so_far: bought,
         });
+        self.accrue_fee_if_configured(bought_amount);
     }
 
     /// Optional oracle cross-check: when an oracle is configured, require this
@@ -237,6 +259,94 @@ impl ExecutionVault {
         }
     }
 
+    /// Credit an off-chain (escrow) slice's fill from the adapter's
+    /// operator-attested settlement.
+    ///
+    /// Called by the agent after it has executed the off-chain swap and the
+    /// settlement operator has proven the realised amount on the `SettlementAdapter`
+    /// (`record_settlement`). The vault cross-contract-reads that proof via
+    /// `settled_fill` and credits the **proven** `bought_amount` — it never trusts
+    /// an agent-supplied number for an off-chain venue. Reverts
+    /// [`Error::EscrowNotSettled`] until the operator signature has been recorded,
+    /// so the agent cannot advance the fill ahead of the proof.
+    pub(super) fn record_escrow_fill_impl(&mut self, slice_id: u32) {
+        self.assert_agent();
+        if slice_id >= self.slice_count.get_or_default() {
+            self.env().revert(Error::UnknownSlice);
+        }
+        if !self.slice_is_escrow.get_or_default(&slice_id) {
+            self.env().revert(Error::NotEscrowSlice);
+        }
+        if self.slice_filled.get_or_default(&slice_id) {
+            self.env().revert(Error::SliceAlreadyFilled);
+        }
+        let adapter = match self.slice_escrow_adapter.get(&slice_id) {
+            Some(a) => a,
+            None => self.env().revert(Error::NotEscrowSlice),
+        };
+        let escrow_id = self.slice_escrow_id.get_or_default(&slice_id);
+
+        // The proof lives on the adapter: (settled, proven bought_amount). The
+        // amount is authorised by an operator signature the adapter verified on
+        // chain; the agent cannot influence it.
+        let (settled, bought_amount) =
+            SettlementProofContractRef::new(self.env(), adapter).settled_fill(escrow_id);
+        if !settled {
+            self.env().revert(Error::EscrowNotSettled);
+        }
+
+        // Defence in depth: the adapter already enforced the realised amount against
+        // the escrow's `min_out`, but re-check against the slice's committed
+        // `min_out` as the vault's own invariant before crediting.
+        let min_out = self.slice_min_out.get_or_default(&slice_id);
+        if let Err(e) = guardrails::check_fill_min_out(bought_amount, min_out) {
+            self.env().revert(e);
+        }
+        let bought =
+            match guardrails::add_bought(self.bought_so_far.get_or_default(), bought_amount) {
+                Ok(v) => v,
+                Err(e) => self.env().revert(e),
+            };
+        self.bought_so_far.set(bought);
+        self.slice_filled.set(&slice_id, true);
+        // The proof is the adapter's attested escrow, not an opaque deploy hash;
+        // reference it as `escrow#<id>` so the audit trail links to the on-chain proof.
+        let mut settlement_ref = String::from("escrow#");
+        settlement_ref.push_str(&escrow_id.to_string());
+        self.env().emit_event(FillRecorded {
+            slice_id,
+            bought_amount,
+            swap_deploy_hash: settlement_ref,
+            bought_so_far: bought,
+        });
+        self.accrue_fee_if_configured(bought_amount);
+    }
+
+    /// If a protocol fee module is configured (treasury opted in via
+    /// `set_fee_module`), accrue its current bps fee on this fill's realised buy
+    /// amount, credited to the configured collector. A no-op when fees are off or
+    /// the amount is zero. The module is an accounting ledger — no funds move here.
+    /// Cross-contract via the `FeeCollector` trait that `FeeModule` implements.
+    fn accrue_fee_if_configured(&mut self, bought_amount: U512) {
+        let fee_module = match self.fee_module.get() {
+            Some(addr) => addr,
+            None => return,
+        };
+        let collector = match self.fee_collector.get() {
+            Some(c) => c,
+            None => return,
+        };
+        if bought_amount.is_zero() {
+            return;
+        }
+        let buy_asset = self.buy_asset.get_or_default();
+        FeeCollectorContractRef::new(self.env(), fee_module).accrue_fee_for(
+            collector,
+            buy_asset,
+            bought_amount,
+        );
+    }
+
     /// Record the agent's decision reasoning for a slice (audit trail).
     pub(super) fn attest_impl(&mut self, slice_id: u32, reason: String) {
         self.assert_agent();
@@ -245,4 +355,17 @@ impl ExecutionVault {
         }
         self.env().emit_event(DecisionAttested { slice_id, reason });
     }
+}
+
+/// Decode the 8-byte little-endian escrow id an escrow adapter returns in its
+/// `SwapReceipt::settlement_ref`. Returns `None` for any other length so the caller
+/// can fail closed rather than mis-link a slice to the wrong escrow.
+fn decode_escrow_id(settlement_ref: &Bytes) -> Option<u64> {
+    let bytes = settlement_ref.as_slice();
+    if bytes.len() != 8 {
+        return None;
+    }
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(bytes);
+    Some(u64::from_le_bytes(buf))
 }

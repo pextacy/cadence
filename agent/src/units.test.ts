@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { computeMinOut, impliedSlippageBps, priceFixed, withinBand, PRICE_SCALE } from "./units.js";
+import {
+  computeMinOut,
+  impliedSlippageBps,
+  priceFixed,
+  withinBand,
+  withinSlippage,
+  PRICE_SCALE,
+} from "./units.js";
 
 describe("computeMinOut", () => {
   it("applies the slippage cap", () => {
@@ -9,6 +16,28 @@ describe("computeMinOut", () => {
   it("rejects out-of-range slippage", () => {
     expect(() => computeMinOut(200_000n, 10_001)).toThrow();
     expect(() => computeMinOut(0n, 100)).toThrow();
+  });
+  it("rounds up so min_out always passes the vault's cross-multiply check", () => {
+    // Regression: at quotedOut=20001, bps=100 a floored min_out (19800) has
+    // implied slippage that the contract's predicate rejects. Rounding up (19801)
+    // must satisfy withinSlippage for the same cap.
+    const q = 20_001n;
+    const minOut = computeMinOut(q, 100);
+    expect(minOut).toBe(19_801n);
+    expect(withinSlippage(q, minOut, 100)).toBe(true);
+  });
+});
+
+describe("withinSlippage", () => {
+  it("mirrors the contract predicate (q - m) * BPS <= q * bps", () => {
+    // The floored value the old code produced is correctly REJECTED here.
+    expect(withinSlippage(20_001n, 19_800n, 100)).toBe(false);
+    expect(withinSlippage(20_001n, 19_801n, 100)).toBe(true);
+    expect(withinSlippage(200_000n, 198_000n, 100)).toBe(true);
+    expect(withinSlippage(200_000n, 200_000n, 0)).toBe(true);
+  });
+  it("rejects a min_out above the quote", () => {
+    expect(withinSlippage(100n, 101n, 100)).toBe(false);
   });
 });
 

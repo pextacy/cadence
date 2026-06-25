@@ -1,11 +1,14 @@
+import { Link } from "react-router-dom";
 import { useDesk } from "../App.js";
 import { deriveMetrics } from "../lib/events.js";
 import { formatAmount, formatBps, formatPrice } from "../lib/format.js";
+import { useActivity } from "../lib/useActivity.js";
 import { NonDataState, Stat, StatusBadge } from "../components/ui.js";
 
 export function FinalReport(): JSX.Element {
   const { config, stream, nowMs } = useDesk();
   const { state, connection } = stream;
+  const activity = useActivity(config.vaultContractHash);
 
   const head = (
     <div className="page-head">
@@ -26,13 +29,33 @@ export function FinalReport(): JSX.Element {
     );
   }
   if (!state.settled) {
+    const sells = config.sellAsset;
     return (
       <div>
         {head}
-        <NonDataState kind="empty" title="Not settled yet">
-          This appears once the vault emits its settlement event — when the order completes or the
-          window closes.
-        </NonDataState>
+        <div className="card reveal">
+          <h2>In progress</h2>
+          <p className="sub">
+            The final settlement report appears here once the order completes or the window closes.
+            Meanwhile, here is the execution so far, read from on-chain activity.
+          </p>
+          <div className="stat-grid" style={{ marginTop: 12 }}>
+            <Stat
+              label="Slices executed"
+              value={activity.summary ? String(activity.summary.slices) : null}
+            />
+            <Stat
+              label="Sold so far"
+              value={activity.summary ? formatAmount(activity.summary.soldMotes, sells) : null}
+              unit={sells}
+            />
+            <Stat label="Funded" value={activity.summary ? (activity.summary.funded ? "Yes" : "No") : null} />
+            <Stat label="On-chain deploys" value={activity.summary ? String(activity.summary.total) : null} />
+          </div>
+          <p className="sub" style={{ marginTop: 14 }}>
+            <Link to="/activity">Full activity →</Link>
+          </p>
+        </div>
       </div>
     );
   }

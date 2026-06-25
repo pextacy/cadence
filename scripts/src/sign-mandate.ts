@@ -7,7 +7,14 @@ import {
   toBaseUnits,
   type Mandate,
 } from "@cadence/mandate";
-import { log, networkChainName, requireEnv } from "./lib/casper.js";
+import {
+  loadSecp256k1,
+  log,
+  logNetworkBanner,
+  networkChainName,
+  requireEnv,
+  signCasperMandate,
+} from "./lib/casper.js";
 
 function toFixedPrice(human: string | undefined): string {
   if (!human || !human.trim()) return "0";
@@ -29,6 +36,7 @@ function randomNonce(): string {
  * `SIGNED_MANDATE_PATH`. Runs fully offline — no chain access required.
  */
 async function main(): Promise<void> {
+  logNetworkBanner("sign-mandate");
   const sellAsset = process.env.SELL_ASSET ?? "CSPR";
   const buyAsset = requireEnv("BUY_ASSET");
   const totalHuman = requireEnv("MANDATE_TOTAL_SIZE");
@@ -51,6 +59,9 @@ async function main(): Promise<void> {
   }
   const chainName = networkChainName();
   const treasuryKey = requireEnv("TREASURY_PRIVATE_KEY");
+  // The agent identity is bound into the Casper-native preimage the vault verifies
+  // on-chain, so it must be known at signing time (offline, no chain access).
+  const agentAccountHash = requireEnv("AGENT_ACCOUNT_HASH");
   const outPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
 
   const startTime = Math.floor(Date.now() / 1000);
@@ -75,9 +86,37 @@ async function main(): Promise<void> {
   const domain = buildMandateDomain(chainName);
   const signed = signMandate(mandate, domain, treasuryKey);
 
-  await writeFile(outPath, JSON.stringify(signed, null, 2), "utf8");
+  // The EIP-712 digest above is the human-readable artifact; the vault's `init`
+  // actually authorizes the limits by verifying a Casper-native signature over the
+  // frozen preimage. Produce it with the same treasury key (the install sender).
+  const m = signed.mandate;
+  const auth = signCasperMandate(loadSecp256k1(treasuryKey), {
+    agentAccountHash,
+    sellAsset: m.sellAsset,
+    buyAsset: m.buyAsset,
+    totalSell: BigInt(m.totalSellAmount),
+    endTimeMs: BigInt(m.endTime) * 1000n,
+    maxSlippageBps: m.maxSlippageBps,
+    priceFloor: BigInt(m.priceFloor),
+    priceCeiling: BigInt(m.priceCeiling),
+    venues: m.venueAllowlist,
+    venueAddresses: m.venueAddresses,
+    nonceHex: m.nonce,
+  });
+
+  const out = {
+    ...signed,
+    agentAccountHash,
+    casperSignature: auth.casperSignature,
+    treasuryPublicKey: auth.treasuryPublicKey,
+  };
+  await writeFile(outPath, JSON.stringify(out, null, 2), "utf8");
 
   log("mandate_signed", { outPath, signer: signed.signer, digest: signed.digest });
+  log("mandate_casper_auth", {
+    treasuryPublicKey: auth.treasuryPublicKey,
+    agentAccountHash,
+  });
   log("mandate_summary", { summary: humanSummary(signed.mandate) });
 }
 

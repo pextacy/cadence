@@ -1,5 +1,6 @@
-//! The two settlement lifecycle events: [`SwapIntent`] (escrow booked) and
-//! [`SettlementRecorded`] (attested fill proven).
+//! The settlement lifecycle events: [`SwapIntent`] (escrow booked),
+//! [`SettlementRecorded`] (attested fill proven), and [`EscrowRefunded`] (an
+//! unsettled escrow reclaimed after the refund timeout).
 
 use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::U512;
@@ -27,4 +28,14 @@ pub struct SettlementRecorded {
     pub bought_amount: U512,
     pub settlement_ref: Bytes,
     pub nonce: Bytes,
+}
+
+/// Emitted when an escrow that was never settled is reclaimed by its recipient
+/// after the refund timeout. Returns custody of the escrowed sell asset rather than
+/// leaving it locked forever when the off-chain swap never settles.
+#[odra::event]
+pub struct EscrowRefunded {
+    pub escrow_id: u64,
+    pub recipient: Address,
+    pub sell_amount: U512,
 }

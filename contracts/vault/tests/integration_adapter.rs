@@ -16,6 +16,7 @@ use odra::prelude::Address;
 use cadence_dex_adapter::cep18_swap::{
     Cep18SwapAdapter, Cep18SwapAdapterHostRef, Cep18SwapAdapterInitArgs,
 };
+use cadence_fee_module::{FeeModule, FeeModuleInitArgs};
 use cadence_vault::vault::{ExecutionVault, ExecutionVaultHostRef, ExecutionVaultInitArgs};
 
 use common::*;
@@ -150,4 +151,60 @@ fn record_fill_is_rejected_after_atomic_settlement() {
         .try_record_fill(slice_id, U512::from(200_000u64), "dup".to_string())
         .unwrap_err();
     assert_eq!(err, cadence_vault::vault::Error::SliceAlreadyFilled.into());
+}
+
+#[test]
+fn fill_accrues_the_protocol_fee_to_the_configured_collector() {
+    // Opt-in protocol fee: with a fee module wired, an atomic fill accrues the
+    // module's bps fee on the realised buy amount to a distinct collector account
+    // (not the trading treasury), proving the end-to-end cross-contract accrual.
+    let (env, mut vault, _adapter, treasury) = setup();
+    let agent = env.get_account(1);
+    let collector = env.get_account(2);
+    const FEE_BPS: u32 = 50; // 0.5%
+
+    // Treasury deploys the fee module (it becomes ROOT_ADMIN + FEE_COLLECTOR), then
+    // grants the vault the collector role so the vault may accrue on its behalf.
+    env.set_caller(treasury);
+    let mut fee = FeeModule::deploy(&env, FeeModuleInitArgs { init_fee_bps: FEE_BPS });
+    env.set_caller(treasury);
+    fee.grant_collector(vault.contract_address());
+
+    // Treasury opts the vault into fees, crediting the configured collector.
+    env.set_caller(treasury);
+    vault.set_fee_module(fee.contract_address(), collector);
+    assert_eq!(vault.get_fee_module(), Some(fee.contract_address()));
+
+    // Agent fills a slice atomically: bought = 200_000 → fee = 200_000 * 50/10_000 = 1000.
+    env.set_caller(agent);
+    vault.execute_slice(
+        U512::from(100_000u64),
+        U512::from(200_000u64),
+        U512::from(198_000u64),
+        VENUE.to_string(),
+    );
+    assert_eq!(vault.get_bought_so_far(), U512::from(200_000u64));
+    assert_eq!(
+        fee.accrued_of(collector),
+        U512::from(1_000u64),
+        "the protocol fee must accrue to the configured collector on the fill"
+    );
+}
+
+#[test]
+fn fills_do_not_accrue_when_no_fee_module_is_configured() {
+    // Fees are off by default: a fill with no fee module wired must not touch any
+    // fee ledger (the default path is unchanged for existing mandates).
+    let (env, mut vault, _adapter, _treasury) = setup();
+    let agent = env.get_account(1);
+    env.set_caller(agent);
+    vault.execute_slice(
+        U512::from(100_000u64),
+        U512::from(200_000u64),
+        U512::from(198_000u64),
+        VENUE.to_string(),
+    );
+    // No fee module configured → the optional accrual was skipped (no revert, fill ok).
+    assert_eq!(vault.get_fee_module(), None);
+    assert_eq!(vault.get_bought_so_far(), U512::from(200_000u64));
 }

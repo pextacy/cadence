@@ -3,13 +3,16 @@ import { readFile } from "node:fs/promises";
 import casper from "casper-js-sdk";
 import type { SignedMandateFile } from "@cadence/agent";
 
-const { Args, CLValue, ContractCallBuilder } = casper;
+const { SessionBuilder } = casper;
 import {
+  EMPTY_RUNTIME_ARGS,
   loadSecp256k1,
   log,
+  logNetworkBanner,
   makeRpc,
   networkChainName,
   networkNodeRpc,
+  proxyCallArgs,
   requireEnv,
 } from "./lib/casper.js";
 import { confirmTransaction } from "./lib/confirm.js";
@@ -22,7 +25,9 @@ import {
   type DeploymentRecord,
 } from "./lib/manifest.js";
 
-const FUND_PAYMENT_MOTES = Number(process.env.FUND_PAYMENT_MOTES ?? "5000000000");
+const FUND_PAYMENT_MOTES = Number(process.env.FUND_PAYMENT_MOTES ?? "15000000000");
+const PROXY_WASM_PATH =
+  process.env.PROXY_WASM_PATH ?? "./resources/proxy_caller_with_return.wasm";
 const MANIFEST_PATH = process.env.DEPLOYMENTS_MANIFEST_PATH ?? "./.deployments.json";
 const CONFIRM_TIMEOUT_MS = Number(process.env.CONFIRM_TIMEOUT_MS ?? "180000");
 const CONFIRM_POLL_INTERVAL_MS = Number(process.env.CONFIRM_POLL_INTERVAL_MS ?? "5000");
@@ -35,8 +40,9 @@ export interface FundResult {
 
 /**
  * Fund the vault with the mandate's full sell amount. The vault's `fund`
- * entrypoint is `#[odra(payable)]`; the attached CSPR is conveyed via Odra's
- * payable calling convention as the `amount` runtime argument.
+ * entrypoint is `#[odra(payable)]`; the attached CSPR is conveyed through Odra's
+ * proxy_caller session (see {@link proxyCallArgs}), which moves the value from the
+ * treasury's main purse into a cargo purse the contract receives.
  *
  * Idempotent + finality-confirmed: a prior `confirmed` fund for this
  * `(chain, mandateDigest)` short-circuits; otherwise the submission is recorded,
@@ -45,6 +51,7 @@ export interface FundResult {
  * confirmed install record.
  */
 export async function fundVault(): Promise<FundResult> {
+  logNetworkBanner("fund-vault");
   const nodeRpc = networkNodeRpc();
   const chainName = networkChainName();
   const signedPath = process.env.SIGNED_MANDATE_PATH ?? "./mandate.signed.json";
@@ -71,11 +78,16 @@ export async function fundVault(): Promise<FundResult> {
 
   const contractHash = resolveContractHash(manifest, chainName, mandateDigest);
 
-  const tx = new ContractCallBuilder()
+  // `fund` is `#[odra(payable)]`: it reads attached_value(), so the CSPR must be
+  // attached. A plain stored-contract call cannot carry value — route through
+  // Odra's proxy_caller session, which moves `total` from the treasury's main purse
+  // into a cargo purse and invokes `fund` with it. (payment below is gas only.)
+  const proxyWasm = new Uint8Array(await readFile(PROXY_WASM_PATH));
+  const args = proxyCallArgs(contractHash, "fund", EMPTY_RUNTIME_ARGS, BigInt(total));
+  const tx = new SessionBuilder()
     .from(treasuryKey.publicKey)
-    .byHash(contractHash)
-    .entryPoint("fund")
-    .runtimeArgs(Args.fromMap({ amount: CLValue.newCLUInt512(total) }))
+    .wasm(proxyWasm)
+    .runtimeArgs(args)
     .chainName(chainName)
     .payment(FUND_PAYMENT_MOTES)
     .build();

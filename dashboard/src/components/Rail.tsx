@@ -4,7 +4,7 @@ import type { ConnectionStatus } from "../lib/useVaultStream.js";
 const CONNECTION_LABEL: Record<ConnectionStatus, string> = {
   idle: "Not connected",
   connecting: "Connecting",
-  open: "Live",
+  open: "Connected",
   error: "Stream error",
   closed: "Disconnected",
 };
@@ -50,6 +50,22 @@ export function Rail({ connection }: { connection: ConnectionStatus }): JSX.Elem
         <NavLink to="/report" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
           <span className="idx" aria-hidden="true">03</span>
           Report
+        </NavLink>
+
+        <span className="eyebrow nav-eyebrow" style={{ marginTop: 14 }}>
+          Insight
+        </span>
+        <NavLink to="/planner" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+          <span className="idx" aria-hidden="true">·</span>
+          AI Planner
+        </NavLink>
+        <NavLink to="/activity" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+          <span className="idx" aria-hidden="true">·</span>
+          Activity
+        </NavLink>
+        <NavLink to="/deployments" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+          <span className="idx" aria-hidden="true">·</span>
+          Deployments
         </NavLink>
       </nav>
 

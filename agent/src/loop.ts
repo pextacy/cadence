@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { resolveNetwork } from "@cadence/mandate";
 import { loadConfig } from "./config.js";
 import { CsprTradeClient } from "./clients/csprTrade.js";
 import { VaultClient } from "./clients/vault.js";
@@ -34,7 +35,11 @@ export async function runAgent(): Promise<void> {
     contractHash: cfg.vaultContractHash,
     agentPrivateKeyHex: cfg.agentPrivateKeyHex,
   });
-  const market = new CsprTradeClient(cfg.csprTradeMcpUrl, mandate.venueAllowlist[0] ?? "cspr.trade");
+  const market = new CsprTradeClient(
+    cfg.csprTradeMcpUrl,
+    mandate.venueAllowlist[0] ?? "cspr.trade",
+    cfg.agentPrivateKeyHex,
+  );
   await market.connect();
 
   const agentAccountHash = vault.agentAccountHash();
@@ -83,6 +88,11 @@ export async function runAgent(): Promise<void> {
   let state: VaultState = seeded.state;
 
   log("agent_start", {
+    // Name the chain up front so an operator sees whether this run trades on
+    // mainnet (real funds) or testnet before any slice is submitted.
+    network: resolveNetwork(cfg.chainName),
+    chainName: cfg.chainName,
+    nodeRpc: cfg.casperNodeRpc,
     totalSell: mandate.totalSell.toString(),
     endTimeMs: mandate.endTimeMs,
     venue: mandate.venueAllowlist,
@@ -138,6 +148,7 @@ export async function runAgent(): Promise<void> {
       state.soldSoFar < mandate.totalSell &&
       Date.now() <= mandate.endTimeMs
     ) {
+      try {
       const baseSnapshot = await buildSnapshot(cfg, market, agentAccountHash, mandate.sellAsset, mandate.buyAsset);
       priceHistory = [...priceHistory, baseSnapshot.midPrice].slice(-PRICE_HISTORY_MAX);
 
@@ -263,6 +274,11 @@ export async function runAgent(): Promise<void> {
       }
 
       await persist();
+      } catch (err) {
+        // Transient failure (market data / MCP / RPC / network): never crash the
+        // agent — log it, leave the vault untouched, and retry on the next tick.
+        log("tick_error", { message: err instanceof Error ? err.message : String(err) });
+      }
       await sleep(cfg.pollIntervalMs);
     }
 

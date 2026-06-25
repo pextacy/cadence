@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { runAgent } from "./loop.js";
 import { runPortfolio } from "./portfolio/run.js";
 
@@ -13,7 +14,7 @@ export * from "./types.js";
 export { loadSignedMandate, toRuntimeMandate, type SignedMandateFile } from "./mandate.js";
 export { loadConfig, type Config } from "./config.js";
 export { validateSlice } from "./executor/guardrails.js";
-export { computeMinOut, impliedSlippageBps, priceFixed, withinBand } from "./units.js";
+export { computeMinOut, impliedSlippageBps, priceFixed, withinBand, withinSlippage } from "./units.js";
 
 // Run the agent when invoked directly (npm run dev / start). A configured
 // PORTFOLIO_MANIFEST_PATH switches to managing several mandates concurrently.

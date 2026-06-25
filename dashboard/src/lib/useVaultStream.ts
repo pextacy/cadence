@@ -45,6 +45,10 @@ export function mapStreamMessage(msg: unknown): VaultEvent | null {
       return { kind: "DecisionAttested", sliceId: num("slice_id"), reason: str("reason") };
     case "StatusChanged":
       return { kind: "StatusChanged", paused: bool("paused") };
+    case "MandateVerified":
+      return { kind: "MandateVerified", treasury: str("treasury") };
+    case "EmergencyWithdrawn":
+      return { kind: "EmergencyWithdrawn", by: str("by"), returnedToTreasury: str("returned_to_treasury"), soldSoFar: str("sold_so_far") };
     case "Settled":
       return { kind: "Settled", completed: bool("completed"), soldSoFar: str("sold_so_far"), boughtSoFar: str("bought_so_far"), sliceCount: num("slice_count"), returnedToTreasury: str("returned_to_treasury") };
     default:
@@ -70,13 +74,16 @@ export function useVaultStream(cfg: DashboardConfig): StreamResult {
       return;
     }
     setConnection("connecting");
-    const channel = `/contract-events?contract_hash=${cfg.vaultContractHash}`;
-    const ws = new WebSocket(`${cfg.streamingUrl}${channel}`);
+    // CSPR.cloud streaming authenticates via an `authorization` HTTP header, which
+    // a browser WebSocket cannot set. Connect through the same-origin dev-server
+    // proxy (vite.config.ts) that injects the header. The contract is scoped by
+    // `contract_package_hash` as bare hex (no `hash-` prefix); auth needs no frame.
+    const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
+    const pkg = cfg.vaultContractHash!.replace(/^(hash-|contract-package-)/, "");
+    const url = `${wsProto}://${window.location.host}/cspr-stream/contract-events?contract_package_hash=${pkg}`;
+    const ws = new WebSocket(url);
 
-    ws.addEventListener("open", () => {
-      setConnection("open");
-      ws.send(JSON.stringify({ action: "subscribe", token: cfg.apiKey, contract_hash: cfg.vaultContractHash }));
-    });
+    ws.addEventListener("open", () => setConnection("open"));
     ws.addEventListener("message", (ev) => {
       let parsed: unknown;
       try {
@@ -156,13 +163,15 @@ export function usePortfolioStream(cfg: DashboardConfig): PortfolioStreamResult 
     const setConn = (id: string, connection: ConnectionStatus): void =>
       setById((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id]!, connection } } : prev));
 
+    const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
     const sockets = hashes.map((id) => {
       setConn(id, "connecting");
-      const ws = new WebSocket(`${cfg.streamingUrl}/contract-events?contract_hash=${id}`);
-      ws.addEventListener("open", () => {
-        setConn(id, "open");
-        ws.send(JSON.stringify({ action: "subscribe", token: cfg.apiKey, contract_hash: id }));
-      });
+      // Same-origin proxy with header-injected auth (see useVaultStream above).
+      const pkg = id.replace(/^(hash-|contract-package-)/, "");
+      const ws = new WebSocket(
+        `${wsProto}://${window.location.host}/cspr-stream/contract-events?contract_package_hash=${pkg}`,
+      );
+      ws.addEventListener("open", () => setConn(id, "open"));
       ws.addEventListener("message", (ev) => {
         let parsed: unknown;
         try {

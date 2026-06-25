@@ -14,6 +14,7 @@ const GAS_RECORD_FILL = 3_000_000_000;
 const GAS_ATTEST = 2_000_000_000;
 const GAS_SETTLE = 5_000_000_000;
 const GAS_PAUSE = 1_500_000_000;
+const GAS_RESUME = 1_500_000_000;
 
 export interface VaultClientOptions {
   nodeRpcUrl: string;
@@ -71,7 +72,7 @@ export class VaultClient {
   private async send(entryPoint: string, args: Casper.Args, gasMotes: number): Promise<string> {
     const tx = new ContractCallBuilder()
       .from(this.key.publicKey)
-      .byHash(this.contractHash)
+      .byPackageHash(this.contractHash)
       .entryPoint(entryPoint)
       .runtimeArgs(args)
       .chainName(this.chainName)
@@ -91,7 +92,7 @@ export class VaultClient {
   }): Casper.Transaction {
     return new ContractCallBuilder()
       .from(this.key.publicKey)
-      .byHash(this.contractHash)
+      .byPackageHash(this.contractHash)
       .entryPoint("execute_slice")
       .runtimeArgs(this.executeSliceArgs(p))
       .chainName(this.chainName)
@@ -150,7 +151,7 @@ export class VaultClient {
   }
 
   async resume(): Promise<string> {
-    return this.send("resume", Args.fromMap({}), GAS_PAUSE);
+    return this.send("resume", Args.fromMap({}), GAS_RESUME);
   }
 
   async settle(): Promise<string> {

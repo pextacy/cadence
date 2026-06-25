@@ -18,7 +18,12 @@ Cargo.lock
 .env
 .env.local
 *.pem
+secrets/
 mandate.signed.json
+
+# Agent runtime state (regenerated each run) + local debug probes
+.cadence-state/
+_probe.mts
 
 # Editor / OS
 .idea/

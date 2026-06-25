@@ -4,7 +4,7 @@
 use cadence_dex_adapter::adapter::SwapReceipt;
 use cadence_dex_adapter::settlement::preimage::settlement_message;
 use cadence_dex_adapter::settlement::{
-    Error, SettlementAdapter, SettlementAdapterHostRef, SettlementAdapterInitArgs,
+    Error, SettlementAdapter, SettlementAdapterHostRef, SettlementAdapterInitArgs, REFUND_TIMEOUT_MS,
 };
 use odra::casper_types::account::AccountHash;
 use odra::casper_types::bytesrepr::{Bytes, ToBytes};
@@ -216,6 +216,30 @@ fn operator_attestation_settles_the_escrow() {
 }
 
 #[test]
+fn settled_fill_exposes_the_proven_amount_for_the_vault() {
+    // The vault credits `bought_so_far` from `settled_fill`, so it must report the
+    // operator-attested amount — and nothing before settlement.
+    let mut fx = setup();
+    escrow(&mut fx);
+
+    // Before settlement: not settled, zero amount, never a false positive.
+    assert_eq!(fx.adapter.settled_fill(0), (false, U512::zero()));
+    // An unknown escrow is also (false, 0), not a revert.
+    assert_eq!(fx.adapter.settled_fill(999), (false, U512::zero()));
+
+    let nonce = Bytes::from(vec![7u8; 32]);
+    let settlement_ref = Bytes::from(b"deploy-hash-xyz".to_vec());
+    let bought = U512::from(199_000u64);
+    let (pk, sig) = sign_settlement(&fx, 0, bought, &settlement_ref, &nonce);
+    fx.env.set_caller(fx.vault);
+    fx.adapter
+        .record_settlement(0, bought, settlement_ref, nonce, pk, sig);
+
+    // After settlement: the proven realised amount the vault will credit.
+    assert_eq!(fx.adapter.settled_fill(0), (true, bought));
+}
+
+#[test]
 fn rejects_settlement_below_min_out() {
     let mut fx = setup();
     escrow(&mut fx);
@@ -332,5 +356,112 @@ fn rejects_unknown_escrow() {
         .adapter
         .try_record_settlement(7, bought, settlement_ref, nonce, pk, sig)
         .unwrap_err();
+    assert_eq!(err, Error::UnknownEscrow.into());
+}
+
+// ---------------------------------------------------------------------------
+// Refund / timeout — recover an escrow whose off-chain swap never settles, so the
+// escrowed sell asset is never locked in the adapter forever.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn refund_returns_custody_to_the_recipient_after_the_timeout() {
+    let mut fx = setup();
+    escrow(&mut fx);
+
+    let before = fx.env.balance_of(&fx.recipient);
+    // Past the refund window: the recipient reclaims the custodied sell asset.
+    fx.env.advance_block_time(REFUND_TIMEOUT_MS + 1);
+    fx.env.set_caller(fx.recipient);
+    fx.adapter.cancel_escrow(0);
+
+    let escrow = fx.adapter.get_escrow(0).unwrap();
+    assert!(escrow.refunded, "escrow is marked refunded");
+    assert!(!escrow.settled, "a refunded escrow is never settled");
+    // settled_fill must NOT report a refunded escrow as a fill the vault can credit.
+    assert_eq!(fx.adapter.settled_fill(0), (false, U512::zero()));
+    let after = fx.env.balance_of(&fx.recipient);
+    assert_eq!(after - before, U512::from(SELL), "sell asset returned in full");
+}
+
+#[test]
+fn refund_rejected_before_the_timeout() {
+    let mut fx = setup();
+    escrow(&mut fx);
+    // No time advanced: still inside the refund window.
+    fx.env.set_caller(fx.recipient);
+    let err = fx.adapter.try_cancel_escrow(0).unwrap_err();
+    assert_eq!(err, Error::RefundTimeoutNotReached.into());
+}
+
+#[test]
+fn refund_rejected_for_a_non_recipient_caller() {
+    let mut fx = setup();
+    escrow(&mut fx);
+    fx.env.advance_block_time(REFUND_TIMEOUT_MS + 1);
+    // The vault (escrowing caller) is NOT the recipient and cannot reclaim.
+    fx.env.set_caller(fx.vault);
+    let err = fx.adapter.try_cancel_escrow(0).unwrap_err();
+    assert_eq!(err, Error::NotRefundRecipient.into());
+}
+
+#[test]
+fn refund_cannot_be_double_claimed() {
+    let mut fx = setup();
+    escrow(&mut fx);
+    fx.env.advance_block_time(REFUND_TIMEOUT_MS + 1);
+    fx.env.set_caller(fx.recipient);
+    fx.adapter.cancel_escrow(0);
+    // A second refund must revert rather than pay out twice.
+    fx.env.set_caller(fx.recipient);
+    let err = fx.adapter.try_cancel_escrow(0).unwrap_err();
+    assert_eq!(err, Error::EscrowAlreadyRefunded.into());
+}
+
+#[test]
+fn settlement_rejected_after_a_refund() {
+    let mut fx = setup();
+    escrow(&mut fx);
+    fx.env.advance_block_time(REFUND_TIMEOUT_MS + 1);
+    fx.env.set_caller(fx.recipient);
+    fx.adapter.cancel_escrow(0);
+
+    // The operator can no longer settle a refunded (terminal) escrow.
+    let nonce = Bytes::from(vec![8u8; 32]);
+    let settlement_ref = Bytes::from(b"too-late".to_vec());
+    let bought = U512::from(199_000u64);
+    let (pk, sig) = sign_settlement(&fx, 0, bought, &settlement_ref, &nonce);
+    fx.env.set_caller(fx.vault);
+    let err = fx
+        .adapter
+        .try_record_settlement(0, bought, settlement_ref, nonce, pk, sig)
+        .unwrap_err();
+    assert_eq!(err, Error::EscrowAlreadyRefunded.into());
+}
+
+#[test]
+fn refund_rejected_after_settlement() {
+    let mut fx = setup();
+    escrow(&mut fx);
+    let nonce = Bytes::from(vec![9u8; 32]);
+    let settlement_ref = Bytes::from(b"settled".to_vec());
+    let bought = U512::from(199_000u64);
+    let (pk, sig) = sign_settlement(&fx, 0, bought, &settlement_ref, &nonce);
+    fx.env.set_caller(fx.vault);
+    fx.adapter.record_settlement(0, bought, settlement_ref, nonce, pk, sig);
+
+    // Even past the timeout, a settled escrow cannot be refunded.
+    fx.env.advance_block_time(REFUND_TIMEOUT_MS + 1);
+    fx.env.set_caller(fx.recipient);
+    let err = fx.adapter.try_cancel_escrow(0).unwrap_err();
+    assert_eq!(err, Error::EscrowAlreadySettled.into());
+}
+
+#[test]
+fn refund_rejected_for_an_unknown_escrow() {
+    let mut fx = setup();
+    fx.env.advance_block_time(REFUND_TIMEOUT_MS + 1);
+    fx.env.set_caller(fx.recipient);
+    let err = fx.adapter.try_cancel_escrow(123).unwrap_err();
     assert_eq!(err, Error::UnknownEscrow.into());
 }

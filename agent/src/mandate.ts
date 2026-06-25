@@ -8,6 +8,12 @@ export interface SignedMandateFile {
   digest: string;
   signature: string;
   signer: string;
+  /** Agent identity bound into the Casper-native preimage ("account-hash-…"). */
+  agentAccountHash?: string;
+  /** Casper-native signature the vault verifies on-chain at `init` (0x hex). */
+  casperSignature?: string;
+  /** Treasury Casper public key hex — passed to `init` as `treasury_public_key`. */
+  treasuryPublicKey?: string;
   /** Vault package hash the mandate was bound to. */
   vaultPackageHash?: string;
 }

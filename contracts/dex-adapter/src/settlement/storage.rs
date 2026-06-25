@@ -5,7 +5,7 @@ use odra::casper_types::bytesrepr::Bytes;
 use odra::casper_types::U512;
 use odra::prelude::*;
 
-use super::events::{SettlementRecorded, SwapIntent};
+use super::events::{EscrowRefunded, SettlementRecorded, SwapIntent};
 
 /// One escrowed slice awaiting off-chain settlement.
 #[odra::odra_type]
@@ -15,10 +15,22 @@ pub struct Escrow {
     pub min_out: U512,
     pub recipient: Address,
     pub settled: bool,
+    /// The realised buy amount proven by a verified operator signature in
+    /// `record_settlement`. Zero until then. This is the value the vault credits
+    /// to `bought_so_far` — never an agent-supplied number.
+    pub bought_amount: U512,
+    /// Block time (ms) the escrow was booked in `swap`. The refund timeout in
+    /// `cancel_escrow` is measured from here so an escrow whose off-chain swap never
+    /// settles can be reclaimed rather than locked forever.
+    pub created_at_ms: u64,
+    /// Set when the recipient reclaims an unsettled escrow via `cancel_escrow`.
+    /// Mutually exclusive with `settled`: a refunded escrow can never settle, and a
+    /// settled escrow can never refund.
+    pub refunded: bool,
 }
 
 /// Escrow + attested-settlement adapter for off-chain venues.
-#[odra::module(events = [SwapIntent, SettlementRecorded], errors = super::errors::Error)]
+#[odra::module(events = [SwapIntent, SettlementRecorded, EscrowRefunded], errors = super::errors::Error)]
 pub struct SettlementAdapter {
     /// Stable venue id this adapter settles for (e.g. `"cspr.trade"`).
     pub(super) venue_id: Var<String>,

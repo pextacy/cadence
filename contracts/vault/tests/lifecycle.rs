@@ -226,3 +226,80 @@ fn execute_slice_blocked_while_halted() {
         .unwrap_err();
     assert_eq!(err, Error::NotActive.into());
 }
+
+// ---------------------------------------------------------------------------
+// pause/resume idempotency — load-bearing for the Guardian desk-wide fan-out,
+// whose VaultControl is specified idempotent (no-op, not revert, when already in
+// the target state). A vault whose live status diverged from the registry must
+// not revert the whole sweep.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pause_is_idempotent_when_already_paused() {
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    fx.env.set_caller(fx.treasury);
+    fx.contract.pause();
+    assert_eq!(fx.contract.get_status(), Status::Paused);
+
+    // A redundant pause (e.g. a guardian sweep re-covering an already-paused
+    // vault) must be a no-op, not a revert.
+    fx.env.set_caller(fx.treasury);
+    fx.contract.pause();
+    assert_eq!(fx.contract.get_status(), Status::Paused);
+}
+
+#[test]
+fn resume_is_idempotent_when_already_active() {
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx); // Active, never paused
+    fx.env.set_caller(fx.treasury);
+    // Resuming an already-active vault is a no-op rather than a revert.
+    fx.contract.resume();
+    assert_eq!(fx.contract.get_status(), Status::Active);
+}
+
+#[test]
+fn pause_resume_round_trips() {
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    fx.env.set_caller(fx.treasury);
+    fx.contract.pause();
+    assert_eq!(fx.contract.get_status(), Status::Paused);
+    fx.env.set_caller(fx.treasury);
+    fx.contract.resume();
+    assert_eq!(fx.contract.get_status(), Status::Active);
+}
+
+#[test]
+fn pause_is_a_noop_on_a_terminal_vault() {
+    // A guardian sweep can race a vault that went terminal between the registry
+    // read and the fan-out; pausing it must not revert (it just does nothing).
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    fx.env.set_caller(fx.treasury);
+    fx.contract.pause();
+    fx.env.set_caller(fx.treasury);
+    fx.contract.emergency_withdraw(); // -> Halted (terminal)
+    assert_eq!(fx.contract.get_status(), Status::Halted);
+
+    // Idempotent: a pause on a Halted vault is a silent no-op, status unchanged.
+    fx.env.set_caller(fx.treasury);
+    fx.contract.pause();
+    assert_eq!(fx.contract.get_status(), Status::Halted);
+}
+
+#[test]
+fn idempotent_pause_still_rejects_an_unprivileged_caller() {
+    // Authorization runs before the status no-op: a non-role account is rejected
+    // regardless of status, so idempotency never widens who can pause.
+    let mut fx = deploy_with(U512::zero(), U512::zero());
+    fund(&mut fx);
+    let stranger = fx.env.get_account(4);
+    fx.env.set_caller(stranger);
+    assert_eq!(
+        fx.contract.try_pause().unwrap_err(),
+        Error::NotAgent.into(),
+        "an unprivileged caller must still be rejected"
+    );
+}

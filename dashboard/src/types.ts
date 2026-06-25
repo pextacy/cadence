@@ -1,5 +1,6 @@
-/** Vault lifecycle status, mirroring the on-chain `Status` enum. */
-export type VaultStatus = "Funded" | "Active" | "Paused" | "Completed" | "Expired";
+/** Vault lifecycle status, mirroring the on-chain `Status` enum. `Halted` is the
+ * terminal state the treasury's emergency drain leaves the vault in. */
+export type VaultStatus = "Funded" | "Active" | "Paused" | "Completed" | "Expired" | "Halted";
 
 /**
  * On-chain events emitted by the Execution Vault, as delivered over CSPR.cloud
@@ -13,6 +14,8 @@ export type VaultEvent =
   | { kind: "FillRecorded"; sliceId: number; boughtAmount: string; swapDeployHash: string; boughtSoFar: string }
   | { kind: "DecisionAttested"; sliceId: number; reason: string }
   | { kind: "StatusChanged"; paused: boolean }
+  | { kind: "MandateVerified"; treasury: string }
+  | { kind: "EmergencyWithdrawn"; by: string; returnedToTreasury: string; soldSoFar: string }
   | { kind: "Settled"; completed: boolean; soldSoFar: string; boughtSoFar: string; sliceCount: number; returnedToTreasury: string };
 
 /** A per-slice view assembled from the SliceExecuted / FillRecorded / attest events. */

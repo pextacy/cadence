@@ -8,7 +8,7 @@ import { z } from "zod";
  * confirms so fund/agent can reuse it without manual env editing.
  */
 export interface DeploymentRecord {
-  readonly kind: "vault-install" | "vault-fund";
+  readonly kind: "vault-install" | "vault-fund" | "vault-register";
   readonly chainName: string;
   readonly mandateDigest: string;
   readonly transactionHash: string;
@@ -37,7 +37,7 @@ export interface DeploymentKey {
 }
 
 const recordSchema = z.object({
-  kind: z.enum(["vault-install", "vault-fund"]),
+  kind: z.enum(["vault-install", "vault-fund", "vault-register"]),
   chainName: z.string().min(1),
   mandateDigest: z.string().min(1),
   transactionHash: z.string().min(1),
