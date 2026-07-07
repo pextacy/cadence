@@ -8,6 +8,13 @@ import { networkPreset } from "@cadence/mandate";
 export interface DashboardConfig {
   streamingUrl?: string;
   apiKey?: string;
+  /**
+   * Set when a same-origin server proxy injects the CSPR.cloud auth server-side
+   * (production: dashboard/server.mjs). Lets streaming be considered configured
+   * without the API key ever reaching the browser. In local dev the key is
+   * present instead, so either path enables the stream.
+   */
+  streamProxied: boolean;
   vaultContractHash?: string;
   /** All vaults to show on the portfolio screen (one vault per mandate). */
   vaultContractHashes: string[];
@@ -30,9 +37,11 @@ export function loadDashboardConfig(): DashboardConfig {
   // and explorer; each can still be overridden by its explicit VITE_* variable.
   const net = networkPreset(env("VITE_CASPER_NETWORK"));
   const single = env("VITE_VAULT_CONTRACT_HASH");
+  const proxied = (env("VITE_STREAM_PROXIED") ?? "").toLowerCase();
   return {
     streamingUrl: env("VITE_CSPR_CLOUD_STREAMING_URL") ?? net.csprCloudStreamingUrl,
     apiKey: env("VITE_CSPR_CLOUD_API_KEY"),
+    streamProxied: proxied === "1" || proxied === "true",
     vaultContractHash: single,
     vaultContractHashes: parseHashes(env("VITE_VAULT_CONTRACT_HASHES"), single),
     chainName: env("VITE_CHAIN_NAME") ?? net.chainName,
@@ -43,14 +52,19 @@ export function loadDashboardConfig(): DashboardConfig {
   };
 }
 
+/** Credentials present either in the browser (dev) or via a server proxy (prod). */
+function hasCredentials(cfg: DashboardConfig): boolean {
+  return Boolean(cfg.apiKey || cfg.streamProxied);
+}
+
 /** Whether enough is configured to attempt a live stream. */
 export function isStreamConfigured(cfg: DashboardConfig): boolean {
-  return Boolean(cfg.streamingUrl && cfg.apiKey && cfg.vaultContractHash);
+  return Boolean(cfg.streamingUrl && hasCredentials(cfg) && cfg.vaultContractHash);
 }
 
 /** Whether enough is configured to stream the portfolio (≥ 1 vault). */
 export function isPortfolioConfigured(cfg: DashboardConfig): boolean {
-  return Boolean(cfg.streamingUrl && cfg.apiKey && cfg.vaultContractHashes.length > 0);
+  return Boolean(cfg.streamingUrl && hasCredentials(cfg) && cfg.vaultContractHashes.length > 0);
 }
 
 /**

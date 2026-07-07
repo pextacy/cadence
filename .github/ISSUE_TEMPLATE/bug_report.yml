@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a defect in the contracts, agent, mandate, or dashboard.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do **not** use this for security vulnerabilities — report those
+        privately via SECURITY.md.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - contracts (Odra / vault / adapter)
+        - agent (planner / executor)
+        - mandate (EIP-712 signing)
+        - dashboard
+        - scripts / deploy
+        - other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands run, config, and any tx/explorer links.
+    validations:
+      required: true
+  - type: input
+    id: network
+    attributes:
+      label: Network
+      placeholder: testnet / mainnet / local
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node version, Rust/Odra version if relevant.

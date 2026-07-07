@@ -1,0 +1,70 @@
+name: Security Audit
+
+# Dependency vulnerability scanning for both ecosystems:
+#   - Rust/Odra contracts  -> cargo-audit against the RustSec advisory DB
+#   - npm workspaces       -> npm audit (high+ severity fails the job)
+# Runs on PRs, pushes to main, and weekly so newly disclosed advisories are
+# caught even without a code change. Complements Dependabot alerts (which need
+# to be enabled in Settings → Code security and analysis).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "27 4 * * 1"
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: cargo-audit (Rust contracts)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read pinned toolchain
+        id: toolchain
+        run: echo "channel=$(tr -d '[:space:]' < rust-toolchain)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain (pinned)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Generate lockfile (not committed)
+        run: cargo generate-lockfile
+
+      - name: Run cargo-audit
+        run: cargo audit
+
+  npm-audit:
+    name: npm audit (TypeScript workspaces)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: npm audit (fail on high+)
+        run: npm audit --audit-level=high

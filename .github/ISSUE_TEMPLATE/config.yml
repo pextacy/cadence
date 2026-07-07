@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/pextacy/cadence/security/advisories/new
+    about: Please report security vulnerabilities privately, not as a public issue. See SECURITY.md.
+  - name: Casper Developers (Telegram)
+    url: https://t.me/CSPRDevelopers
+    about: Ask questions and discuss Casper development.
+  - name: Casper Discord
+    url: https://discord.com/invite/caspernetwork
+    about: Community chat and support.

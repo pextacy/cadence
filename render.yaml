@@ -1,0 +1,49 @@
+# Render Blueprint for the Cadence dashboard.
+#
+# One free web service that serves the built dashboard AND proxies CSPR.cloud
+# streaming (WebSocket), CSPR.cloud REST, and the Gemini planner server-side
+# (see dashboard/server.mjs). Render's free tier supports WebSockets natively,
+# which Vercel's serverless model cannot do — that is why the live event stream
+# is hosted here rather than on Vercel.
+#
+# Deploy: push this repo to GitHub, then in Render → New → Blueprint, point it at
+# the repo. Render reads this file. Fill the `sync: false` secrets in the
+# dashboard when prompted (they are not stored in git).
+#
+# Note: the free plan spins the service down after ~15 min idle; the first
+# request then takes ~1 min to wake. Hit the URL once before a live demo.
+services:
+  - type: web
+    name: cadence-dashboard
+    runtime: node
+    plan: free
+    # Build @cadence/mandate first (dashboard imports it from dist/), then the
+    # dashboard. --include=dev so tsc/vite devDeps are installed under NODE_ENV=production.
+    buildCommand: npm ci --include=dev && npm run build --workspace @cadence/mandate && npm run build --workspace @cadence/dashboard
+    startCommand: node dashboard/server.mjs
+    envVars:
+      # --- Public (build-time, bundled to the browser — safe to expose) ---
+      # Tells the frontend a server-side proxy is present, so streaming is
+      # enabled without shipping the API key to the browser.
+      - key: VITE_STREAM_PROXIED
+        value: "1"
+      - key: VITE_CASPER_NETWORK
+        value: testnet
+      # Vault package hash(es) the dashboard reconstructs state for. Fill these.
+      - key: VITE_VAULT_CONTRACT_HASH
+        sync: false
+      - key: VITE_VAULT_CONTRACT_HASHES
+        sync: false
+      - key: VITE_EXPLORER_TX_BASE
+        sync: false
+      - key: VITE_NAIVE_BASELINE_PRICE
+        sync: false
+      # Split deploy: restrict cross-origin proxy calls to your Vercel URL.
+      # Default "*" works; set to the exact frontend origin to lock it down.
+      - key: ALLOW_ORIGIN
+        value: "*"
+      # --- Secret (server-side only, never bundled) ---
+      - key: CSPR_CLOUD_API_KEY
+        sync: false
+      - key: LLM_API_KEY
+        sync: false

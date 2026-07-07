@@ -1,0 +1,52 @@
+name: CodeQL
+
+# Static analysis / security scanning for the TypeScript monorepo
+# (mandate, agent, scripts, dashboard). Results surface under the repo's
+# Security → Code scanning alerts tab. Enable "Code scanning" in
+# Settings → Code security and analysis for the alerts to appear.
+#
+# Note: the Odra contracts are Rust; CodeQL has no stable Rust support yet, so
+# Rust dependency/security scanning is handled separately by security-audit.yml
+# (cargo-audit) and by `cargo clippy -D warnings` in ci.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so newly disclosed advisories are caught even without a push.
+    - cron: "27 3 * * 1"
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["javascript-typescript"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          language: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

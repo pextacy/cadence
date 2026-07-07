@@ -3,6 +3,7 @@ import type { DashboardConfig } from "../config.js";
 import { isPortfolioConfigured, isStreamConfigured } from "../config.js";
 import type { DashboardState, VaultEvent } from "../types.js";
 import { initialState, reduceEvent } from "./events.js";
+import { backendWsBase } from "./backend.js";
 
 export type ConnectionStatus = "idle" | "connecting" | "open" | "error" | "closed";
 
@@ -78,9 +79,8 @@ export function useVaultStream(cfg: DashboardConfig): StreamResult {
     // a browser WebSocket cannot set. Connect through the same-origin dev-server
     // proxy (vite.config.ts) that injects the header. The contract is scoped by
     // `contract_package_hash` as bare hex (no `hash-` prefix); auth needs no frame.
-    const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
     const pkg = cfg.vaultContractHash!.replace(/^(hash-|contract-package-)/, "");
-    const url = `${wsProto}://${window.location.host}/cspr-stream/contract-events?contract_package_hash=${pkg}`;
+    const url = `${backendWsBase()}/cspr-stream/contract-events?contract_package_hash=${pkg}`;
     const ws = new WebSocket(url);
 
     ws.addEventListener("open", () => setConnection("open"));
@@ -163,13 +163,14 @@ export function usePortfolioStream(cfg: DashboardConfig): PortfolioStreamResult 
     const setConn = (id: string, connection: ConnectionStatus): void =>
       setById((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id]!, connection } } : prev));
 
-    const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
+    const wsBase = backendWsBase();
     const sockets = hashes.map((id) => {
       setConn(id, "connecting");
-      // Same-origin proxy with header-injected auth (see useVaultStream above).
+      // Proxy with header-injected auth (see useVaultStream above). Same-origin,
+      // or the configured backend for a split (Vercel frontend + Render backend).
       const pkg = id.replace(/^(hash-|contract-package-)/, "");
       const ws = new WebSocket(
-        `${wsProto}://${window.location.host}/cspr-stream/contract-events?contract_package_hash=${pkg}`,
+        `${wsBase}/cspr-stream/contract-events?contract_package_hash=${pkg}`,
       );
       ws.addEventListener("open", () => setConn(id, "open"));
       ws.addEventListener("message", (ev) => {

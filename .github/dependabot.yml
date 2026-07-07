@@ -1,0 +1,40 @@
+version: 2
+# Automated dependency update PRs. Security *alerts* are a separate repo setting
+# (Settings → Code security and analysis → Dependabot alerts) — enable that too;
+# this file only governs the version-update PRs.
+updates:
+  # npm workspaces. The lockfile is at the repo root; the root manifest declares
+  # the workspaces, so a single root ecosystem entry covers all of them.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      # Batch minor/patch bumps into one PR to cut review noise.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Rust / Odra contracts.
+  - package-ecosystem: cargo
+    directory: "/contracts"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Pinned GitHub Actions in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5

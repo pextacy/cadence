@@ -5,6 +5,8 @@
  * deploy that touched the vault, newest first.
  */
 
+import { backendHttpBase } from "./backend.js";
+
 export interface ActivityItem {
   action: string;
   detail: string;
@@ -78,7 +80,7 @@ function describe(args: Record<string, unknown>): { action: string; detail: stri
 export async function fetchActivity(packageHash: string): Promise<ActivityItem[]> {
   const pkg = packageHash.replace(/^(hash-|contract-package-)/, "");
   // No `order` param — CSPR.cloud 400s on an unsupported sort field; sort client-side.
-  const res = await fetch(`/cspr-api/deploys?contract_package_hash=${pkg}&page_size=50`);
+  const res = await fetch(`${backendHttpBase()}/cspr-api/deploys?contract_package_hash=${pkg}&page_size=50`);
   if (!res.ok) throw new Error(`CSPR.cloud HTTP ${res.status}`);
   const json = (await res.json()) as {
     data?: Array<{

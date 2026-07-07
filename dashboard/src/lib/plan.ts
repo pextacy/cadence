@@ -6,6 +6,8 @@
  * why" view.
  */
 
+import { backendHttpBase } from "./backend.js";
+
 const MODEL = "gemini-2.5-flash";
 
 const SYSTEM_PROMPT = `You are the planning module of Cadence, an autonomous OTC execution desk.
@@ -83,7 +85,7 @@ export async function askPlanner(input: PlanInput): Promise<PlanResult> {
     slicesRemaining: input.slicesRemaining,
   });
 
-  const res = await fetch(`/gemini/models/${MODEL}:generateContent`, {
+  const res = await fetch(`${backendHttpBase()}/gemini/models/${MODEL}:generateContent`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
