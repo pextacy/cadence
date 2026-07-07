@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useDesk } from "../App.js";
 import { deriveMetrics } from "../lib/events.js";
-import { formatAmount, formatDuration, formatBps, formatPrice } from "../lib/format.js";
+import { formatAmount, formatDuration, formatPrice } from "../lib/format.js";
 import { useActivity } from "../lib/useActivity.js";
 import { CadenceStave } from "../components/CadenceStave.js";
 import { Stat } from "../components/ui.js";

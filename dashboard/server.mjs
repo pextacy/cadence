@@ -17,6 +17,7 @@
  *   PORT                      injected by the host
  */
 import express from "express";
+import rateLimit from "express-rate-limit";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -36,6 +37,18 @@ const geminiKey = (process.env.LLM_API_KEY || "").trim();
 const allowOrigin = (process.env.ALLOW_ORIGIN || "*").trim();
 
 const app = express();
+
+// Rate-limit every HTTP route (proxies + static file serving) to cap abuse/DoS.
+// Generous for a live demo with several concurrent viewers; the WebSocket upgrade
+// bypasses express (server.on('upgrade')) so live streaming is unaffected.
+app.use(
+  rateLimit({
+    windowMs: 60_000,
+    limit: 600,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+  }),
+);
 
 // CORS for the proxy routes only. WebSocket upgrades don't use CORS; browser
 // fetch (activity, gemini) does — including a preflight for the gemini POST.
