@@ -108,7 +108,7 @@ jobs:
           fi
 
       - name: "Create GitHub Release (TODO: attach wasm artifacts once published by CI)"
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.build.outputs.tag }}
           name: Cadence ${{ needs.build.outputs.tag }}
