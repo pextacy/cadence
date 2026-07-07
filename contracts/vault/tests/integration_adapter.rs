@@ -166,7 +166,12 @@ fn fill_accrues_the_protocol_fee_to_the_configured_collector() {
     // Treasury deploys the fee module (it becomes ROOT_ADMIN + FEE_COLLECTOR), then
     // grants the vault the collector role so the vault may accrue on its behalf.
     env.set_caller(treasury);
-    let mut fee = FeeModule::deploy(&env, FeeModuleInitArgs { init_fee_bps: FEE_BPS });
+    let mut fee = FeeModule::deploy(
+        &env,
+        FeeModuleInitArgs {
+            init_fee_bps: FEE_BPS,
+        },
+    );
     env.set_caller(treasury);
     fee.grant_collector(vault.contract_address());
 

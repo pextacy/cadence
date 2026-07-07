@@ -4,7 +4,8 @@
 use cadence_dex_adapter::adapter::SwapReceipt;
 use cadence_dex_adapter::settlement::preimage::settlement_message;
 use cadence_dex_adapter::settlement::{
-    Error, SettlementAdapter, SettlementAdapterHostRef, SettlementAdapterInitArgs, REFUND_TIMEOUT_MS,
+    Error, SettlementAdapter, SettlementAdapterHostRef, SettlementAdapterInitArgs,
+    REFUND_TIMEOUT_MS,
 };
 use odra::casper_types::account::AccountHash;
 use odra::casper_types::bytesrepr::{Bytes, ToBytes};
@@ -381,7 +382,11 @@ fn refund_returns_custody_to_the_recipient_after_the_timeout() {
     // settled_fill must NOT report a refunded escrow as a fill the vault can credit.
     assert_eq!(fx.adapter.settled_fill(0), (false, U512::zero()));
     let after = fx.env.balance_of(&fx.recipient);
-    assert_eq!(after - before, U512::from(SELL), "sell asset returned in full");
+    assert_eq!(
+        after - before,
+        U512::from(SELL),
+        "sell asset returned in full"
+    );
 }
 
 #[test]
@@ -448,7 +453,8 @@ fn refund_rejected_after_settlement() {
     let bought = U512::from(199_000u64);
     let (pk, sig) = sign_settlement(&fx, 0, bought, &settlement_ref, &nonce);
     fx.env.set_caller(fx.vault);
-    fx.adapter.record_settlement(0, bought, settlement_ref, nonce, pk, sig);
+    fx.adapter
+        .record_settlement(0, bought, settlement_ref, nonce, pk, sig);
 
     // Even past the timeout, a settled escrow cannot be refunded.
     fx.env.advance_block_time(REFUND_TIMEOUT_MS + 1);

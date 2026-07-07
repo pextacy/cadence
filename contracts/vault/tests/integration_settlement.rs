@@ -125,8 +125,15 @@ fn settle(
     let nonce = Bytes::from(vec![7u8; 32]);
     let settlement_ref = Bytes::from(b"cspr-trade-deploy".to_vec());
     let addr = adapter.contract_address();
-    let msg = settlement_message(&addr, escrow_id, bought, &settlement_ref, &nonce, &recipient)
-        .expect("preimage serializes");
+    let msg = settlement_message(
+        &addr,
+        escrow_id,
+        bought,
+        &settlement_ref,
+        &nonce,
+        &recipient,
+    )
+    .expect("preimage serializes");
     let sig = env.sign_message(&msg, &operator);
     let pk = env.public_key(&operator);
     // Anyone may submit; only the operator signature authorises it.

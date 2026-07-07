@@ -151,6 +151,14 @@ fn fanout_survives_a_vault_already_paused_out_of_band() {
     env.set_caller(treasury);
     let affected = guardian.global_pause(0, 10);
     assert_eq!(affected, 2, "both registry-Active records get a pause call");
-    assert_eq!(vault_a.get_status(), Status::Paused, "already-paused vault unchanged");
-    assert_eq!(vault_b.get_status(), Status::Paused, "the other vault is paused");
+    assert_eq!(
+        vault_a.get_status(),
+        Status::Paused,
+        "already-paused vault unchanged"
+    );
+    assert_eq!(
+        vault_b.get_status(),
+        Status::Paused,
+        "the other vault is paused"
+    );
 }

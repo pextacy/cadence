@@ -36,14 +36,16 @@ jobs:
       - name: Install dependencies (npm ci)
         run: npm ci
 
+      # Build first: mandate/agent/scripts emit their dist/ (their package types
+      # resolve from dist), so the cross-workspace imports typecheck cleanly.
+      - name: Build (all workspaces)
+        run: npm run build
+
       - name: Typecheck (all workspaces)
         run: npm run typecheck
 
       - name: Test (all workspaces)
         run: npm test
-
-      - name: Build (all workspaces)
-        run: npm run build
 
   # ---------------------------------------------------------------------------
   # Rust / Odra contracts. Toolchain is pinned by contracts/rust-toolchain
