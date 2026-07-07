@@ -14,6 +14,43 @@ for the technical spec. Contributor rules live in [`docs/claude.md`](docs/claude
 
 ---
 
+## Live on Casper testnet
+
+**App:** https://cadence-two-tawny.vercel.app — the dashboard reconstructs state
+live from on-chain events (CSPR.cloud streaming). It is a static frontend (Vercel)
+talking to a small proxy backend (Render) that injects credentials server-side; no
+keys reach the browser.
+
+How to test it, step by step:
+
+1. Open the app and go to **Deployments** — the vault and swap-adapter packages
+   are shown with explorer links (network: `casper-test`).
+2. Open **Activity** — the vault's real testnet deploys are listed newest-first,
+   fetched from chain.
+3. Open **Execution** / the Cadence Stave — reconstructed from the vault's fill
+   events; **AI Planner** shows the live Gemini proposal for the next slice.
+4. Every hash links to [testnet.cspr.live](https://testnet.cspr.live).
+
+Deployed contracts (contract **package** hashes, verifiable on-chain):
+
+| Contract | Package hash |
+|---|---|
+| Execution Vault | `5af977b35dadd74eb4a14bc8b8edd3dd7fbba0a0e115ca4c012b5a2fbc90a014` |
+| Cep18 Swap Adapter (venue) | `6c2bce9b90acb75238b640758b99904b6ff1fc243e765722397e045ac76b8dcb` |
+
+Sample testnet transactions:
+
+| Transaction | Deploy hash |
+|---|---|
+| Vault install (mandate signature verified on-chain) | [`692a3c1f…d3d768`](https://testnet.cspr.live/deploy/692a3c1f4d6b17c2d5a77d79b01e7961dc40e53fe433064b078dae5397d3d768) |
+| Vault funded (100 CSPR) | [`3d778237…a52c49`](https://testnet.cspr.live/deploy/3d77823749fc3773cb6862da308426488733c19ef4ecea6ddfc2676f06a52c49) |
+| `execute_slice` → atomic swap → fill | [`d3902a11…8f3594`](https://testnet.cspr.live/deploy/d3902a11c6503da231fdacd9a073493dfabe1599c3f90736c29c5c98fb8f3594) |
+
+To run the full flow yourself against a fresh vault, see
+[Running the demo (testnet)](#running-the-demo-testnet).
+
+---
+
 ## Architecture
 
 ```
