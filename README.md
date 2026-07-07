@@ -184,7 +184,7 @@ route is exercised on mainnet rather than testnet.
 - **Verified by `npm test`** — EIP-712 sign/verify and tamper-rejection (mandate),
   guardrail parity with the contract, slippage/price/min-out math, the planner
   output schema, the x402 payment-payload construction + signature round-trip, and
-  the dashboard event reducer + metrics. (201 tests across packages.)
+  the dashboard event reducer + metrics. (217 tests across packages.)
 - **Requires a configured testnet + keys** — deploying the vault and the on-chain
   swap adapter, funding the vault, and the agent releasing a real atomic slice
   through the adapter (vault → swap → settlement), plus CSPR.cloud streaming for the
