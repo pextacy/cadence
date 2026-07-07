@@ -77,7 +77,9 @@ app.use(
     target: "https://generativelanguage.googleapis.com",
     changeOrigin: true,
     pathRewrite: (p) => {
-      const base = p.replace(/^\/gemini/, "/v1beta");
+      // express has already stripped the "/gemini" mount prefix, so `p` is like
+      // "/models/xxx:generateContent". Prepend the API version and append the key.
+      const base = "/v1beta" + p;
       return base + (base.includes("?") ? "&" : "?") + "key=" + geminiKey;
     },
     on: {
