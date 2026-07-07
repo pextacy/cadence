@@ -86,8 +86,20 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-${{ steps.toolchain.outputs.channel }}-
 
-      - name: Install binaryen + wabt (wasm-opt / wasm-strip)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binaryen wabt
+      - name: Install wabt (wasm-strip)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends wabt
+
+      - name: Install binaryen (wasm-opt) from release
+        # Ubuntu's apt binaryen is too old for the flags build-wasm.sh needs
+        # (--enable-bulk-memory-opt, --llvm-memory-copy-fill-lowering, …), which
+        # lower modern opcodes to the subset Casper's engine accepts. Pull a
+        # modern release binary instead.
+        run: |
+          ver=version_123
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${ver}/binaryen-${ver}-x86_64-linux.tar.gz" \
+            | sudo tar -xz -C /usr/local --strip-components=1
+          sudo ldconfig
+          wasm-opt --version
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
