@@ -67,7 +67,7 @@ jobs:
       - name: Install Rust toolchain (pinned)
         # Pinned to a SHA (master HEAD as of 2026-06-20) rather than @master so a
         # force-push to the action's branch can't silently change our toolchain.
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
           components: rustfmt, clippy
