@@ -24,7 +24,7 @@
     "@cadence/mandate": "0.1.0",
     "@casper-ecosystem/casper-eip-712": "1.2.1",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@noble/curves": "1.8.1",
+    "@noble/curves": "2.2.0",
     "casper-js-sdk": "5.0.12",
     "dotenv": "17.4.2",
     "zod": "4.4.3"

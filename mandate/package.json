@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@casper-ecosystem/casper-eip-712": "1.2.1",
-    "@noble/curves": "1.8.1"
+    "@noble/curves": "2.2.0"
   },
   "devDependencies": {
     "typescript": "5.7.3",
