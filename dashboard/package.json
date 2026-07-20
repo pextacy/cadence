@@ -13,9 +13,9 @@
   },
   "dependencies": {
     "@cadence/mandate": "0.1.0",
-    "@fontsource/ibm-plex-mono": "5.2.7",
-    "@fontsource/ibm-plex-sans": "5.2.8",
-    "@fontsource/space-grotesk": "5.2.10",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/ibm-plex-sans": "5.3.0",
+    "@fontsource/space-grotesk": "5.3.0",
     "express": "4.22.2",
     "express-rate-limit": "7.4.1",
     "http-proxy-middleware": "3.0.3",
